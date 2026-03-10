@@ -30,7 +30,9 @@ LEFT JOIN stock_ledger sl ON sl.batch_item_id = bi.batch_item_id
 WHERE b.batch_status = 'received'
 GROUP BY m.medicine_name, bi.batch_item_id, bi.expiry_date,
          bi.unit_price, b.batch_no, s.supplier_name, m.reorder_level;
-
+         
+SELECT * FROM vw_current_stock;
+-- Empty for now, will show data after seed
 
 -- VIEW 2 — Expiry Alert
 CREATE OR REPLACE VIEW vw_expiry_alert AS
@@ -79,3 +81,5 @@ WHERE b.batch_status = 'received'
 GROUP BY m.medicine_id, m.medicine_name, m.reorder_level
 HAVING COALESCE(SUM(sl.quantity_change), 0) <= m.reorder_level
 ORDER BY total_stock ASC;
+
+SHOW FULL TABLES WHERE Table_type = 'VIEW';
