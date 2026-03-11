@@ -1,10 +1,24 @@
-USE medical_inventory_db;
+-- USE medical_inventory_db;
+
+-- ============================================================
+-- Drop existing triggers before recreating
+-- ============================================================
+DROP TRIGGER IF EXISTS trg_after_batch_item_insert;
+DROP TRIGGER IF EXISTS trg_after_insert_batch_item_invoice;
+DROP TRIGGER IF EXISTS trg_after_delete_batch_item_invoice;
+DROP TRIGGER IF EXISTS trg_before_sale_item_insert;
+DROP TRIGGER IF EXISTS trg_after_sale_item_insert;
+DROP TRIGGER IF EXISTS trg_before_return_insert;
+DROP TRIGGER IF EXISTS trg_after_return_insert;
+
 
 -- ============================================================
 -- TRIGGER 1: trg_after_batch_item_insert
--- Fires when a batch_item is inserted (medicines received)
--- Automatically adds a 'purchase' entry to stock_ledger
--- No ordering concept — stock is added immediately on entry
+-- FIX: fetch SUM into v_prev_balance variable first,
+--      then use variable in INSERT VALUES.
+--      MySQL error 1093 occurs when you SELECT from the same
+--      table you are inserting into inside the same statement.
+--      Using a variable breaks the self-reference.
 -- ============================================================
 DELIMITER $$
 
@@ -12,15 +26,21 @@ CREATE TRIGGER trg_after_batch_item_insert
 AFTER INSERT ON batch_item
 FOR EACH ROW
 BEGIN
-    -- Get who entered this batch (received_by from batch table)
-    DECLARE v_received_by INT;
+    DECLARE v_received_by  INT;
+    DECLARE v_prev_balance INT DEFAULT 0;
 
+    -- Who entered this batch
     SELECT received_by INTO v_received_by
     FROM batch
     WHERE batch_id = NEW.batch_id;
 
-    -- Insert stock ledger entry for this medicine
-    -- balance_after = previous balance + quantity just received
+    -- FIX: fetch previous balance into variable BEFORE the INSERT
+    SELECT COALESCE(SUM(quantity_change), 0)
+    INTO   v_prev_balance
+    FROM   stock_ledger
+    WHERE  batch_item_id = NEW.batch_item_id;
+
+    -- Now INSERT using the variable — no self-referencing subquery
     INSERT INTO stock_ledger (
         medicine_id,
         batch_item_id,
@@ -36,14 +56,8 @@ BEGIN
         NEW.batch_item_id,
         'purchase',
         NEW.quantity_received,
-        -- Calculate running balance for this batch_item
-        -- COALESCE handles first entry (no previous ledger rows)
-        COALESCE((
-            SELECT SUM(quantity_change)
-            FROM stock_ledger
-            WHERE batch_item_id = NEW.batch_item_id
-        ), 0) + NEW.quantity_received,
-        NEW.batch_id,       -- reference_id points to batch
+        v_prev_balance + NEW.quantity_received,  -- variable used here
+        NEW.batch_id,
         v_received_by,
         NOW()
     );
@@ -54,8 +68,7 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 2: trg_after_insert_batch_item_invoice
--- Fires when a batch_item is inserted
--- Auto-calculates and updates invoice_amount on the batch
+-- No change needed — no self-referencing subquery here
 -- ============================================================
 DELIMITER $$
 
@@ -63,7 +76,6 @@ CREATE TRIGGER trg_after_insert_batch_item_invoice
 AFTER INSERT ON batch_item
 FOR EACH ROW
 BEGIN
-    -- Add this item's cost to the batch invoice total
     UPDATE batch
     SET invoice_amount = COALESCE(invoice_amount, 0) + (NEW.quantity_received * NEW.unit_price)
     WHERE batch_id = NEW.batch_id;
@@ -74,8 +86,7 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 3: trg_after_delete_batch_item_invoice
--- Fires when a batch_item is deleted
--- Recalculates invoice_amount on the batch
+-- No change needed — no self-referencing subquery here
 -- ============================================================
 DELIMITER $$
 
@@ -83,7 +94,6 @@ CREATE TRIGGER trg_after_delete_batch_item_invoice
 AFTER DELETE ON batch_item
 FOR EACH ROW
 BEGIN
-    -- Subtract deleted item's cost from the batch invoice total
     UPDATE batch
     SET invoice_amount = invoice_amount - (OLD.quantity_received * OLD.unit_price)
     WHERE batch_id = OLD.batch_id;
@@ -94,11 +104,8 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 4: trg_before_sale_item_insert
--- Fires BEFORE a sale_item is inserted
--- CONCURRENCY: Uses FOR UPDATE to lock stock_ledger rows
--- This prevents two pharmacists from selling the same stock
--- simultaneously (race condition protection)
--- Blocks the sale if stock is insufficient
+-- No change needed — SELECT into variable is fine in BEFORE trigger
+-- (not inserting into stock_ledger here, only reading)
 -- ============================================================
 DELIMITER $$
 
@@ -108,15 +115,12 @@ FOR EACH ROW
 BEGIN
     DECLARE v_current_stock INT;
 
-    -- FOR UPDATE locks the rows so no other transaction
-    -- can read/modify this batch_item's stock until we commit
     SELECT COALESCE(SUM(quantity_change), 0)
     INTO   v_current_stock
     FROM   stock_ledger
     WHERE  batch_item_id = NEW.batch_item_id
     FOR UPDATE;
 
-    -- Block the sale if not enough stock
     IF NEW.quantity_sold > v_current_stock THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Insufficient stock for this batch item.';
@@ -128,8 +132,10 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 5: trg_after_sale_item_insert
--- Fires AFTER a sale_item is inserted
--- Deducts stock from ledger (negative quantity_change)
+-- FIX: fetch SUM into v_prev_balance variable first,
+--      then use variable in INSERT SELECT.
+--      The nested subquery on stock_ledger inside a
+--      stock_ledger INSERT caused error 1093.
 -- ============================================================
 DELIMITER $$
 
@@ -137,7 +143,21 @@ CREATE TRIGGER trg_after_sale_item_insert
 AFTER INSERT ON sale_item
 FOR EACH ROW
 BEGIN
-    -- Insert a 'sale' ledger entry with negative quantity (stock out)
+    DECLARE v_served_by    INT;
+    DECLARE v_prev_balance INT DEFAULT 0;
+
+    -- Who served this sale
+    SELECT served_by INTO v_served_by
+    FROM sale
+    WHERE sale_id = NEW.sale_id;
+
+    -- FIX: fetch previous balance into variable BEFORE the INSERT
+    SELECT COALESCE(SUM(quantity_change), 0)
+    INTO   v_prev_balance
+    FROM   stock_ledger
+    WHERE  batch_item_id = NEW.batch_item_id;
+
+    -- INSERT using variable — no self-referencing subquery
     INSERT INTO stock_ledger (
         medicine_id,
         batch_item_id,
@@ -148,21 +168,16 @@ BEGIN
         transacted_by,
         transacted_at
     )
-    SELECT
+    VALUES (
         NEW.medicine_id,
         NEW.batch_item_id,
         'sale',
-        -NEW.quantity_sold,                 -- negative = stock going out
-        COALESCE((
-            SELECT SUM(sl.quantity_change)
-            FROM stock_ledger sl
-            WHERE sl.batch_item_id = NEW.batch_item_id
-        ), 0) - NEW.quantity_sold,          -- new balance after deduction
-        NEW.sale_id,                        -- reference_id points to sale
-        s.served_by,
+        -NEW.quantity_sold,
+        v_prev_balance - NEW.quantity_sold,   -- variable used here
+        NEW.sale_id,
+        v_served_by,
         NOW()
-    FROM sale s
-    WHERE s.sale_id = NEW.sale_id;
+    );
 END$$
 
 DELIMITER ;
@@ -170,10 +185,7 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 6: trg_before_return_insert
--- Fires BEFORE a return is inserted
--- CONCURRENCY: Uses FOR UPDATE to lock stock_ledger rows
--- Only applies for write_off and return_to_supplier
--- (these reduce stock — must check availability first)
+-- No change needed — SELECT into variable is fine in BEFORE trigger
 -- ============================================================
 DELIMITER $$
 
@@ -183,10 +195,8 @@ FOR EACH ROW
 BEGIN
     DECLARE v_current_stock INT;
 
-    -- Only check stock for resolutions that reduce stock
     IF NEW.resolution IN ('write_off', 'return_to_supplier') THEN
 
-        -- Lock rows to prevent concurrent stock reduction
         SELECT COALESCE(SUM(quantity_change), 0)
         INTO   v_current_stock
         FROM   stock_ledger
@@ -206,12 +216,10 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 7: trg_after_return_insert
--- Fires AFTER a return is inserted
--- Updates stock based on return_type and resolution:
---   customer_return + refund/replacement → return_in  (stock UP)
---   damage_report   + write_off          → damage_write_off (stock DOWN)
---   supplier_return / return_to_supplier → return_out (stock DOWN)
---   resolution = pending                 → NO stock movement
+-- FIX: fetch SUM into v_prev_balance variable first,
+--      then calculate v_qty_change and v_balance_after,
+--      then use variables in INSERT VALUES.
+--      Same error 1093 fix as triggers 1 and 5.
 -- ============================================================
 DELIMITER $$
 
@@ -219,8 +227,39 @@ CREATE TRIGGER trg_after_return_insert
 AFTER INSERT ON `return`
 FOR EACH ROW
 BEGIN
-    -- pending resolution means decision not made yet — skip stock movement
+    DECLARE v_prev_balance  INT DEFAULT 0;
+    DECLARE v_qty_change    INT DEFAULT 0;
+    DECLARE v_balance_after INT DEFAULT 0;
+    DECLARE v_txn_type      VARCHAR(20);
+
     IF NEW.resolution != 'pending' THEN
+
+        -- FIX: fetch previous balance into variable BEFORE the INSERT
+        SELECT COALESCE(SUM(quantity_change), 0)
+        INTO   v_prev_balance
+        FROM   stock_ledger
+        WHERE  batch_item_id = NEW.batch_item_id;
+
+        -- Determine transaction type
+        IF NEW.return_type = 'customer_return'
+           AND NEW.resolution IN ('refund', 'replacement') THEN
+            SET v_txn_type   = 'return_in';
+            SET v_qty_change = NEW.quantity_returned;          -- stock UP
+
+        ELSEIF NEW.return_type = 'damage_report'
+               AND NEW.resolution = 'write_off' THEN
+            SET v_txn_type   = 'damage_write_off';
+            SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
+
+        ELSEIF NEW.return_type = 'supplier_return'
+               OR NEW.resolution = 'return_to_supplier' THEN
+            SET v_txn_type   = 'return_out';
+            SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
+        END IF;
+
+        SET v_balance_after = v_prev_balance + v_qty_change;
+
+        -- INSERT using variables — no self-referencing subquery
         INSERT INTO stock_ledger (
             medicine_id,
             batch_item_id,
@@ -231,52 +270,18 @@ BEGIN
             transacted_by,
             transacted_at
         )
-        SELECT
+        VALUES (
             NEW.medicine_id,
             NEW.batch_item_id,
-
-            -- Determine transaction type based on return_type + resolution
-            CASE
-                WHEN NEW.return_type = 'customer_return'
-                     AND NEW.resolution IN ('refund','replacement') THEN 'return_in'
-                WHEN NEW.return_type = 'damage_report'
-                     AND NEW.resolution = 'write_off'              THEN 'damage_write_off'
-                WHEN NEW.return_type = 'supplier_return'
-                     OR  NEW.resolution = 'return_to_supplier'     THEN 'return_out'
-            END,
-
-            -- Determine quantity direction (positive = stock in, negative = stock out)
-            CASE
-                WHEN NEW.return_type = 'customer_return'
-                     AND NEW.resolution IN ('refund','replacement') THEN  NEW.quantity_returned
-                WHEN NEW.return_type = 'damage_report'
-                     AND NEW.resolution = 'write_off'              THEN -NEW.quantity_returned
-                WHEN NEW.return_type = 'supplier_return'
-                     OR  NEW.resolution = 'return_to_supplier'     THEN -NEW.quantity_returned
-            END,
-
-            -- Calculate new balance
-            COALESCE((
-                SELECT SUM(sl.quantity_change)
-                FROM stock_ledger sl
-                WHERE sl.batch_item_id = NEW.batch_item_id
-            ), 0) +
-            CASE
-                WHEN NEW.return_type = 'customer_return'
-                     AND NEW.resolution IN ('refund','replacement') THEN  NEW.quantity_returned
-                WHEN NEW.return_type = 'damage_report'
-                     AND NEW.resolution = 'write_off'              THEN -NEW.quantity_returned
-                WHEN NEW.return_type = 'supplier_return'
-                     OR  NEW.resolution = 'return_to_supplier'     THEN -NEW.quantity_returned
-            END,
-
-            NEW.return_id,          -- reference_id points to return
+            v_txn_type,
+            v_qty_change,
+            v_balance_after,
+            NEW.return_id,
             NEW.processed_by,
             NOW()
-        FROM DUAL;
+        );
+
     END IF;
 END$$
 
 DELIMITER ;
-
-SHOW TRIGGERS;
