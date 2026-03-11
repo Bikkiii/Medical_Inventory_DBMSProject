@@ -1,12 +1,12 @@
-import { useState } from "react";
-import { currentStock } from "../data/mockData.js";
+import { useState, useEffect } from "react";
+import { apiFetch } from "../api.js";
 
 function getExpiryStatus(expiryDate) {
   const days = Math.ceil((new Date(expiryDate) - new Date()) / 86400000);
   if (days < 0) return { label: "Expired", cls: "badge-red" };
-  if (days <= 30) return { label: `${days}d left`, cls: "badge-red" };
-  if (days <= 60) return { label: `${days}d left`, cls: "badge-orange" };
-  if (days <= 90) return { label: `${days}d left`, cls: "badge-yellow" };
+  if (days <= 30) return { label: "Expiring (30d)", cls: "badge-red" };
+  if (days <= 60) return { label: "Expiring (60d)", cls: "badge-orange" };
+  if (days <= 90) return { label: "Expiring (90d)", cls: "badge-yellow" };
   return { label: "OK", cls: "badge-green" };
 }
 
@@ -16,57 +16,49 @@ function getStockStatus(stock, reorder) {
   return { label: "OK", cls: "badge-green" };
 }
 
-function DamageModal({ onClose, onSubmit }) {
+function DamageModal({ users, onClose, onSubmit }) {
   const [form, setForm] = useState({
     batch_item_id: "",
-    quantity_damaged: "",
+    qty_damaged: "",
     damage_cause: "storage",
     resolution: "write_off",
-    processed_by: "Aayush Chhuka",
+    processed_by_user_id: "",
   });
-  const set = (e) => setForm({ ...form, [e.target.name]: e.target.value });
-
   return (
     <div className="modal-backdrop">
       <div className="modal-box">
-        <div className="modal-header">
-          <h3>Report Damage / Write-off</h3>
-          <button className="modal-close" onClick={onClose}>
-            ✕
-          </button>
-        </div>
+        <h3>Report Damage / Write-off</h3>
         <div className="modal-body">
-          <div className="alert alert-warning" style={{ marginBottom: 16 }}>
-            ⚠ This will reduce stock in the ledger with transaction type{" "}
-            <code>damage_write_off</code>.
-          </div>
           <div className="form-grid">
             <div className="form-group">
               <label>Batch Item ID</label>
               <input
-                name="batch_item_id"
-                value={form.batch_item_id}
-                onChange={set}
                 type="number"
+                value={form.batch_item_id}
+                onChange={(e) =>
+                  setForm({ ...form, batch_item_id: e.target.value })
+                }
                 placeholder="e.g. 9"
               />
             </div>
             <div className="form-group">
               <label>Quantity Damaged</label>
               <input
-                name="quantity_damaged"
-                value={form.quantity_damaged}
-                onChange={set}
                 type="number"
+                value={form.qty_damaged}
+                onChange={(e) =>
+                  setForm({ ...form, qty_damaged: e.target.value })
+                }
                 placeholder="e.g. 10"
               />
             </div>
             <div className="form-group">
               <label>Damage Cause</label>
               <select
-                name="damage_cause"
                 value={form.damage_cause}
-                onChange={set}
+                onChange={(e) =>
+                  setForm({ ...form, damage_cause: e.target.value })
+                }
               >
                 <option value="transit">Transit</option>
                 <option value="storage">Storage</option>
@@ -77,7 +69,12 @@ function DamageModal({ onClose, onSubmit }) {
             </div>
             <div className="form-group">
               <label>Resolution</label>
-              <select name="resolution" value={form.resolution} onChange={set}>
+              <select
+                value={form.resolution}
+                onChange={(e) =>
+                  setForm({ ...form, resolution: e.target.value })
+                }
+              >
                 <option value="write_off">Write Off</option>
                 <option value="return_to_supplier">Return to Supplier</option>
               </select>
@@ -85,19 +82,23 @@ function DamageModal({ onClose, onSubmit }) {
             <div className="form-group">
               <label>Processed By</label>
               <select
-                name="processed_by"
-                value={form.processed_by}
-                onChange={set}
+                value={form.processed_by_user_id}
+                onChange={(e) =>
+                  setForm({ ...form, processed_by_user_id: e.target.value })
+                }
               >
-                <option>Aayush Chhuka</option>
-                <option>Bikash Dhami</option>
-                <option>Admin User</option>
+                <option value="">-- Select --</option>
+                {users.map((u) => (
+                  <option key={u.user_id} value={u.user_id}>
+                    {u.full_name}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
         </div>
         <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={onClose}>
+          <button className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
           <button className="btn btn-danger" onClick={() => onSubmit(form)}>
@@ -110,30 +111,63 @@ function DamageModal({ onClose, onSubmit }) {
 }
 
 function Stock({ showToast }) {
+  const [stock, setStock] = useState([]);
+  const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
   const [showDamage, setShowDamage] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const filtered = currentStock.filter(
-    (r) =>
-      r.medicine_name.toLowerCase().includes(search.toLowerCase()) ||
-      r.batch_no.toLowerCase().includes(search.toLowerCase()) ||
-      r.supplier.toLowerCase().includes(search.toLowerCase()),
+  function loadStock() {
+    setLoading(true);
+    Promise.all([apiFetch("/stock"), apiFetch("/users")])
+      .then(([s, u]) => {
+        setStock(s);
+        setUsers(u);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadStock();
+  }, []);
+
+  async function handleDamageSubmit(form) {
+    try {
+      await apiFetch("/returns/damage", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      setShowDamage(false);
+      showToast("Damage reported. Stock updated.", "success");
+      loadStock();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  }
+
+  const filtered = stock.filter(
+    (row) =>
+      (row.medicine_name || "").toLowerCase().includes(search.toLowerCase()) ||
+      (row.batch_no || "").toLowerCase().includes(search.toLowerCase()) ||
+      (row.supplier_name || "").toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
     <div>
       <div className="page-header">
-        <div className="page-header-left">
+        <div>
           <h1>Current Stock</h1>
           <p>
-            Live view from <code>vw_current_stock</code>
+            Live from <code>vw_current_stock</code>
           </p>
         </div>
         <div className="page-header-actions">
           <div className="search-wrapper">
             <input
               className="search-bar"
-              placeholder="Search medicine, batch..."
+              placeholder="Search medicine or batch..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -142,102 +176,95 @@ function Stock({ showToast }) {
             className="btn btn-warning"
             onClick={() => setShowDamage(true)}
           >
-            ⚠ Report Damage
+            Report Damage
           </button>
         </div>
       </div>
 
+      {error && <div className="error-box">⚠ {error}</div>}
+
       <div className="card">
-        <div className="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Medicine Name</th>
-                <th>Batch No</th>
-                <th>Supplier</th>
-                <th>Expiry Date</th>
-                <th>Unit Price</th>
-                <th>Stock</th>
-                <th>Reorder</th>
-                <th>Expiry Status</th>
-                <th>Stock Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((row) => {
-                const exp = getExpiryStatus(row.expiry_date);
-                const stk = getStockStatus(
-                  row.current_stock,
-                  row.reorder_level,
-                );
-                return (
-                  <tr key={row.batch_item_id}>
-                    <td className="td-muted">{row.batch_item_id}</td>
-                    <td style={{ fontWeight: 500, color: "var(--text)" }}>
-                      {row.medicine_name}
-                    </td>
-                    <td className="td-primary">{row.batch_no}</td>
-                    <td className="td-muted">{row.supplier}</td>
-                    <td className="td-muted">{row.expiry_date}</td>
+        {loading ? (
+          <div className="loading">Loading stock…</div>
+        ) : (
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Medicine Name</th>
+                  <th>Batch No</th>
+                  <th>Supplier</th>
+                  <th>Expiry Date</th>
+                  <th>Unit Price (Rs.)</th>
+                  <th>Current Stock</th>
+                  <th>Reorder Level</th>
+                  <th>Expiry Status</th>
+                  <th>Stock Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((row, i) => {
+                  const qty = row.current_qty ?? row.current_stock ?? 0;
+                  const reorder = row.reorder_level ?? 0;
+                  const expSt = getExpiryStatus(row.expiry_date);
+                  const stkSt = getStockStatus(qty, reorder);
+                  return (
+                    <tr key={i}>
+                      <td>{row.batch_item_id}</td>
+                      <td>{row.medicine_name}</td>
+                      <td>
+                        <span className="td-primary">{row.batch_no}</span>
+                      </td>
+                      <td>{row.supplier_name || row.supplier}</td>
+                      <td>{row.expiry_date}</td>
+                      <td>
+                        {parseFloat(
+                          row.unit_cost || row.unit_price || 0,
+                        ).toFixed(2)}
+                      </td>
+                      <td>
+                        <strong>{qty}</strong>
+                      </td>
+                      <td>{reorder}</td>
+                      <td>
+                        <span className={`badge ${expSt.cls}`}>
+                          {expSt.label}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${stkSt.cls}`}>
+                          {stkSt.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <tr>
                     <td
+                      colSpan={10}
                       style={{
-                        fontFamily: "'DM Mono', monospace",
-                        fontSize: 12,
+                        textAlign: "center",
+                        color: "#888",
+                        padding: 20,
                       }}
                     >
-                      Rs. {row.unit_price.toFixed(2)}
-                    </td>
-                    <td
-                      style={{
-                        fontFamily: "'DM Mono', monospace",
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "var(--text)",
-                      }}
-                    >
-                      {row.current_stock}
-                    </td>
-                    <td className="td-muted">{row.reorder_level}</td>
-                    <td>
-                      <span className={`badge ${exp.cls}`}>{exp.label}</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${stk.cls}`}>{stk.label}</span>
+                      No records found.
                     </td>
                   </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="empty-state">
-                    <p>No records match your search.</p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-3)" }}>
-          Showing {filtered.length} of {currentStock.length} items
-        </div>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {showDamage && (
         <DamageModal
+          users={users}
           onClose={() => setShowDamage(false)}
-          onSubmit={(form) => {
-            console.log(
-              "CALL sp_report_damage(",
-              form.batch_item_id,
-              form.quantity_damaged,
-              form.damage_cause,
-              form.resolution,
-              ");",
-            );
-            setShowDamage(false);
-            showToast("Damage reported. Stock ledger updated.", "success");
-          }}
+          onSubmit={handleDamageSubmit}
         />
       )}
     </div>

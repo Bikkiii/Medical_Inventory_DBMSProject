@@ -1,51 +1,64 @@
-import { currentStock } from "../data/mockData.js";
+import { useState, useEffect } from "react";
+import { apiFetch } from "../api.js";
 
 function Alerts() {
-  const today = new Date();
+  const [expiry, setExpiry] = useState([]);
+  const [lowStock, setLowStock] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const expiry = currentStock
-    .map((s) => ({
-      ...s,
-      days: Math.ceil((new Date(s.expiry_date) - today) / 86400000),
-    }))
-    .filter((s) => s.days <= 90)
-    .sort((a, b) => a.days - b.days);
-
-  const lowStock = currentStock
-    .filter((s) => s.current_stock <= s.reorder_level)
-    .sort((a, b) => a.current_stock - b.current_stock);
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      apiFetch("/stock/expiry-alerts"),
+      apiFetch("/stock/low-stock"),
+    ])
+      .then(([e, ls]) => {
+        setExpiry(e);
+        setLowStock(ls);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
 
   function expiryBadge(days) {
     if (days < 0) return { cls: "badge-red", label: "EXPIRED" };
-    if (days <= 30) return { cls: "badge-red", label: "Within 30 days" };
-    if (days <= 60) return { cls: "badge-orange", label: "Within 60 days" };
-    return { cls: "badge-yellow", label: "Within 90 days" };
+    if (days <= 30) return { cls: "badge-red", label: "Expiring in 30d" };
+    if (days <= 60) return { cls: "badge-orange", label: "Expiring in 60d" };
+    return { cls: "badge-yellow", label: "Expiring in 90d" };
   }
+
+  if (loading) return <div className="loading">Loading alerts…</div>;
+  if (error) return <div className="error-box">⚠ {error}</div>;
 
   return (
     <div>
       <div className="page-header">
-        <div className="page-header-left">
+        <div>
           <h1>Alerts</h1>
-          <p>Expiry and low-stock warnings</p>
+          <p>
+            From <code>vw_expiry_alert</code> and <code>vw_low_stock</code>
+          </p>
         </div>
       </div>
 
-      {/* Expiry Alerts */}
       <div className="card">
-        <div className="card-title">
-          <span style={{ color: "var(--red)", fontWeight: 700 }}>
-            ⏰ Expiry Alerts
-          </span>
-          <span>
-            View: <code>vw_expiry_alert</code> &nbsp;·&nbsp; {expiry.length}{" "}
-            item(s)
+        <div className="section-title">
+          Expiry Alerts — <code>vw_expiry_alert</code>
+          <span
+            style={{
+              float: "right",
+              fontSize: 12,
+              color: "#888",
+              fontWeight: "normal",
+            }}
+          >
+            {expiry.length} item(s)
           </span>
         </div>
-
         {expiry.length === 0 ? (
           <div className="alert alert-success">
-            ✓ No expiry alerts. All stock is within safe dates.
+            No expiry alerts. All stock is within safe dates.
           </div>
         ) : (
           <div className="table-wrapper">
@@ -62,47 +75,34 @@ function Alerts() {
                 </tr>
               </thead>
               <tbody>
-                {expiry.map((s) => {
-                  const b = expiryBadge(s.days);
+                {expiry.map((s, i) => {
+                  const days = Math.ceil(
+                    (new Date(s.expiry_date) - new Date()) / 86400000,
+                  );
+                  const badge = expiryBadge(days);
                   return (
-                    <tr key={s.batch_item_id}>
-                      <td style={{ fontWeight: 500, color: "var(--text)" }}>
-                        {s.medicine_name}
+                    <tr key={i}>
+                      <td>{s.medicine_name}</td>
+                      <td>
+                        <span className="td-primary">{s.batch_no}</span>
                       </td>
-                      <td className="td-primary">{s.batch_no}</td>
-                      <td className="td-muted">{s.supplier}</td>
-                      <td
-                        style={{
-                          color: s.days <= 30 ? "var(--red)" : "var(--text-2)",
-                          fontWeight: s.days <= 30 ? 600 : 400,
-                        }}
-                      >
+                      <td>{s.supplier_name || s.supplier}</td>
+                      <td style={{ color: days <= 30 ? "red" : "#333" }}>
                         {s.expiry_date}
                       </td>
                       <td
                         style={{
-                          fontFamily: "'DM Mono', monospace",
-                          fontWeight: 700,
-                          color:
-                            s.days < 0
-                              ? "var(--red)"
-                              : s.days <= 30
-                                ? "var(--orange)"
-                                : "var(--text-2)",
+                          color: days <= 30 ? "red" : "#333",
+                          fontWeight: "bold",
                         }}
                       >
-                        {s.days < 0 ? "Expired" : `${s.days}d`}
+                        {days < 0 ? "Expired" : `${days} days`}
                       </td>
-                      <td
-                        style={{
-                          fontFamily: "'DM Mono', monospace",
-                          fontSize: 13,
-                        }}
-                      >
-                        {s.current_stock}
-                      </td>
+                      <td>{s.current_qty ?? s.current_stock}</td>
                       <td>
-                        <span className={`badge ${b.cls}`}>{b.label}</span>
+                        <span className={`badge ${badge.cls}`}>
+                          {badge.label}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -113,21 +113,23 @@ function Alerts() {
         )}
       </div>
 
-      {/* Low Stock */}
       <div className="card">
-        <div className="card-title">
-          <span style={{ color: "var(--orange)", fontWeight: 700 }}>
-            📉 Low Stock Alerts
-          </span>
-          <span>
-            View: <code>vw_low_stock</code> &nbsp;·&nbsp; {lowStock.length}{" "}
-            item(s)
+        <div className="section-title">
+          Low Stock Alerts — <code>vw_low_stock</code>
+          <span
+            style={{
+              float: "right",
+              fontSize: 12,
+              color: "#888",
+              fontWeight: "normal",
+            }}
+          >
+            {lowStock.length} item(s)
           </span>
         </div>
-
         {lowStock.length === 0 ? (
           <div className="alert alert-success">
-            ✓ All medicines are above their reorder levels.
+            All medicines are above their reorder levels.
           </div>
         ) : (
           <div className="table-wrapper">
@@ -144,42 +146,36 @@ function Alerts() {
                 </tr>
               </thead>
               <tbody>
-                {lowStock.map((s) => (
-                  <tr key={s.batch_item_id}>
-                    <td style={{ fontWeight: 500, color: "var(--text)" }}>
-                      {s.medicine_name}
-                    </td>
-                    <td className="td-primary">{s.batch_no}</td>
-                    <td className="td-muted">{s.supplier}</td>
-                    <td className="td-muted">{s.reorder_level}</td>
-                    <td
-                      style={{
-                        fontFamily: "'DM Mono', monospace",
-                        fontWeight: 700,
-                        color:
-                          s.current_stock <= 0 ? "var(--red)" : "var(--orange)",
-                      }}
-                    >
-                      {s.current_stock}
-                    </td>
-                    <td
-                      style={{
-                        fontFamily: "'DM Mono', monospace",
-                        fontWeight: 600,
-                        color: "var(--red)",
-                      }}
-                    >
-                      -{s.reorder_level - s.current_stock}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${s.current_stock <= 0 ? "badge-red" : "badge-orange"}`}
+                {lowStock.map((s, i) => {
+                  const qty = s.current_qty ?? s.current_stock ?? 0;
+                  const shortage = Math.max(0, (s.reorder_level || 0) - qty);
+                  return (
+                    <tr key={i}>
+                      <td>{s.medicine_name}</td>
+                      <td>
+                        <span className="td-primary">{s.batch_no}</span>
+                      </td>
+                      <td>{s.supplier_name || s.supplier}</td>
+                      <td>{s.reorder_level}</td>
+                      <td
+                        style={{
+                          color: qty <= 0 ? "red" : "orange",
+                          fontWeight: "bold",
+                        }}
                       >
-                        {s.current_stock <= 0 ? "Out of Stock" : "Low Stock"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                        {qty}
+                      </td>
+                      <td style={{ color: "red" }}>{shortage}</td>
+                      <td>
+                        <span
+                          className={`badge ${qty <= 0 ? "badge-red" : "badge-orange"}`}
+                        >
+                          {qty <= 0 ? "Out of Stock" : "Low Stock"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

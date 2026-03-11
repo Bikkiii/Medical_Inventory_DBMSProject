@@ -1,100 +1,73 @@
-import { useState } from "react";
-import { sales, saleItems } from "../data/mockData.js";
+import { useState, useEffect } from "react";
+import { apiFetch } from "../api.js";
 
-function NewSaleModal({ onClose, onSubmit }) {
+function NewSaleModal({ medicines, users, onClose, onSubmit }) {
   const [form, setForm] = useState({
     customer_name: "",
-    customer_phone: "",
-    served_by: "Aayush Chhuka",
+    phone: "",
+    served_by_user_id: "",
     payment_mode: "cash",
   });
   const [item, setItem] = useState({
-    medicine: "Paracetamol 500mg",
-    batch_item_id: "1",
-    quantity_sold: "",
+    medicine_id: "",
+    batch_item_id: "",
+    qty: "",
     unit_price: "",
     discount_pct: "0",
   });
 
-  const set1 = (e) => setForm({ ...form, [e.target.name]: e.target.value });
-  const set2 = (e) => setItem({ ...item, [e.target.name]: e.target.value });
-
   const subtotal =
-    item.quantity_sold && item.unit_price
-      ? (
-          item.quantity_sold *
-          item.unit_price *
-          (1 - item.discount_pct / 100)
-        ).toFixed(2)
+    item.qty && item.unit_price
+      ? (item.qty * item.unit_price * (1 - item.discount_pct / 100)).toFixed(2)
       : "0.00";
-
-  const medicines = [
-    "Paracetamol 500mg",
-    "Amoxicillin 250mg",
-    "Vitamin C 500mg",
-    "Azithromycin 500mg",
-    "ORS Sachet",
-    "Cetirizine 10mg",
-    "Metformin 500mg",
-    "Betadine Solution",
-  ];
 
   return (
     <div className="modal-backdrop">
       <div className="modal-box">
-        <div className="modal-header">
-          <h3>Process New Sale</h3>
-          <button className="modal-close" onClick={onClose}>
-            ✕
-          </button>
-        </div>
+        <h3>Process New Sale</h3>
         <div className="modal-body">
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 12,
-              color: "var(--text-3)",
-              marginBottom: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.5px",
-            }}
-          >
-            Customer Details
-          </div>
-          <div className="form-grid" style={{ marginBottom: 18 }}>
+          <div className="form-grid" style={{ marginBottom: 16 }}>
             <div className="form-group">
               <label>Customer Name</label>
               <input
-                name="customer_name"
                 value={form.customer_name}
-                onChange={set1}
+                onChange={(e) =>
+                  setForm({ ...form, customer_name: e.target.value })
+                }
                 placeholder="Ram Sharma"
               />
             </div>
             <div className="form-group">
               <label>Phone</label>
               <input
-                name="customer_phone"
-                value={form.customer_phone}
-                onChange={set1}
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 placeholder="9800000001"
               />
             </div>
             <div className="form-group">
               <label>Served By</label>
-              <select name="served_by" value={form.served_by} onChange={set1}>
-                <option>Aayush Chhuka</option>
-                <option>Bikash Dhami</option>
-                <option>Brishav Joshi</option>
-                <option>Admin User</option>
+              <select
+                value={form.served_by_user_id}
+                onChange={(e) =>
+                  setForm({ ...form, served_by_user_id: e.target.value })
+                }
+              >
+                <option value="">-- Select --</option>
+                {users.map((u) => (
+                  <option key={u.user_id} value={u.user_id}>
+                    {u.full_name}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="form-group">
               <label>Payment Mode</label>
               <select
-                name="payment_mode"
                 value={form.payment_mode}
-                onChange={set1}
+                onChange={(e) =>
+                  setForm({ ...form, payment_mode: e.target.value })
+                }
               >
                 <option value="cash">Cash</option>
                 <option value="card">Card</option>
@@ -104,62 +77,64 @@ function NewSaleModal({ onClose, onSubmit }) {
             </div>
           </div>
 
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 12,
-              color: "var(--text-3)",
-              marginBottom: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.5px",
-            }}
-          >
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
             Medicine Item
           </div>
           <div className="form-grid">
             <div className="form-group">
               <label>Medicine</label>
-              <select name="medicine" value={item.medicine} onChange={set2}>
+              <select
+                value={item.medicine_id}
+                onChange={(e) =>
+                  setItem({ ...item, medicine_id: e.target.value })
+                }
+              >
+                <option value="">-- Select --</option>
                 {medicines.map((m) => (
-                  <option key={m}>{m}</option>
+                  <option key={m.medicine_id} value={m.medicine_id}>
+                    {m.medicine_name}
+                  </option>
                 ))}
               </select>
             </div>
             <div className="form-group">
               <label>Batch Item ID</label>
               <input
-                name="batch_item_id"
-                value={item.batch_item_id}
-                onChange={set2}
                 type="number"
+                value={item.batch_item_id}
+                onChange={(e) =>
+                  setItem({ ...item, batch_item_id: e.target.value })
+                }
+                placeholder="e.g. 1"
               />
             </div>
             <div className="form-group">
               <label>Quantity</label>
               <input
-                name="quantity_sold"
-                value={item.quantity_sold}
-                onChange={set2}
                 type="number"
-                placeholder="5"
+                value={item.qty}
+                onChange={(e) => setItem({ ...item, qty: e.target.value })}
+                placeholder="e.g. 5"
               />
             </div>
             <div className="form-group">
               <label>Unit Price (Rs.)</label>
               <input
-                name="unit_price"
                 value={item.unit_price}
-                onChange={set2}
+                onChange={(e) =>
+                  setItem({ ...item, unit_price: e.target.value })
+                }
                 placeholder="3.50"
               />
             </div>
             <div className="form-group">
               <label>Discount (%)</label>
               <input
-                name="discount_pct"
-                value={item.discount_pct}
-                onChange={set2}
                 type="number"
+                value={item.discount_pct}
+                onChange={(e) =>
+                  setItem({ ...item, discount_pct: e.target.value })
+                }
               />
             </div>
             <div className="form-group">
@@ -169,16 +144,14 @@ function NewSaleModal({ onClose, onSubmit }) {
           </div>
         </div>
         <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={onClose}>
+          <button className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
           <button
             className="btn btn-success"
-            onClick={() =>
-              onSubmit({ ...form, ...item, total_amount: subtotal })
-            }
+            onClick={() => onSubmit({ ...form, items: [item] })}
           >
-            ✓ Confirm Sale
+            Confirm Sale
           </button>
         </div>
       </div>
@@ -186,188 +159,174 @@ function NewSaleModal({ onClose, onSubmit }) {
   );
 }
 
-function statusBadge(s) {
-  return s === "completed"
-    ? "badge-teal"
-    : s === "partially_returned"
-      ? "badge-yellow"
-      : "badge-red";
-}
-
 function Sales({ showToast }) {
+  const [sales, setSales] = useState([]);
+  const [medicines, setMedicines] = useState([]);
+  const [users, setUsers] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [selectedSale, setSelected] = useState(null);
+  const [selectedSale, setSelectedSale] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  function loadAll() {
+    setLoading(true);
+    Promise.all([
+      apiFetch("/sales"),
+      apiFetch("/medicines"),
+      apiFetch("/users"),
+    ])
+      .then(([s, m, u]) => {
+        setSales(s);
+        setMedicines(m);
+        setUsers(u);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  async function handleSaleSubmit(data) {
+    try {
+      await apiFetch("/sales", { method: "POST", body: JSON.stringify(data) });
+      setShowModal(false);
+      showToast("Sale completed successfully.", "success");
+      loadAll();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  }
+
+  function statusBadge(status) {
+    if (status === "completed") return "badge-green";
+    if (status === "partially_returned") return "badge-yellow";
+    if (status === "fully_returned") return "badge-red";
+    return "badge-gray";
+  }
 
   return (
     <div>
       <div className="page-header">
-        <div className="page-header-left">
+        <div>
           <h1>Sales</h1>
-          <p>Customer sales history</p>
+          <p>Sale history and new transactions</p>
         </div>
-        <div className="page-header-actions">
-          <button
-            className="btn btn-success"
-            onClick={() => setShowModal(true)}
-          >
-            + New Sale
-          </button>
-        </div>
+        <button className="btn btn-success" onClick={() => setShowModal(true)}>
+          + New Sale
+        </button>
       </div>
+
+      {error && <div className="error-box">⚠ {error}</div>}
 
       <div className="card">
-        <div className="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Sale ID</th>
-                <th>Date</th>
-                <th>Customer</th>
-                <th>Phone</th>
-                <th>Served By</th>
-                <th>Total (Rs.)</th>
-                <th>Payment</th>
-                <th>Status</th>
-                <th>Items</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sales.map((s) => (
-                <tr key={s.sale_id}>
-                  <td className="td-primary">#{s.sale_id}</td>
-                  <td className="td-muted">{s.sale_date}</td>
-                  <td style={{ fontWeight: 500, color: "var(--text)" }}>
-                    {s.customer_name}
-                  </td>
-                  <td className="td-muted">{s.customer_phone}</td>
-                  <td className="td-muted">{s.served_by}</td>
-                  <td
-                    style={{
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--teal)",
-                    }}
-                  >
-                    {s.total_amount.toFixed(2)}
-                  </td>
-                  <td>
-                    <span className="badge badge-blue">{s.payment_mode}</span>
-                  </td>
-                  <td>
-                    <span className={`badge ${statusBadge(s.sale_status)}`}>
-                      {s.sale_status.replace(/_/g, " ")}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() =>
-                        setSelected(
-                          selectedSale === s.sale_id ? null : s.sale_id,
-                        )
-                      }
-                    >
-                      {selectedSale === s.sale_id ? "Hide" : "View"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {sales.length === 0 && (
-                <tr>
-                  <td colSpan={9}>
-                    <div className="empty-state">
-                      <p>No sales recorded yet.</p>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {selectedSale && (
-        <div className="card">
-          <div className="card-title">
-            Sale #{selectedSale} — Line Items
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => setSelected(null)}
-            >
-              Close
-            </button>
-          </div>
+        {loading ? (
+          <div className="loading">Loading sales…</div>
+        ) : (
           <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
-                  <th>Item ID</th>
-                  <th>Medicine</th>
-                  <th>Batch No</th>
-                  <th>Qty Sold</th>
-                  <th>Unit Price</th>
-                  <th>Discount %</th>
-                  <th>Subtotal (Rs.)</th>
+                  <th>Sale ID</th>
+                  <th>Date</th>
+                  <th>Customer</th>
+                  <th>Phone</th>
+                  <th>Served By</th>
+                  <th>Total (Rs.)</th>
+                  <th>Payment</th>
+                  <th>Status</th>
+                  <th>Items</th>
                 </tr>
               </thead>
               <tbody>
-                {saleItems
-                  .filter((i) => i.sale_id === selectedSale)
-                  .map((i) => (
-                    <tr key={i.sale_item_id}>
-                      <td className="td-muted">{i.sale_item_id}</td>
-                      <td style={{ fontWeight: 500, color: "var(--text)" }}>
-                        {i.medicine_name}
-                      </td>
-                      <td className="td-primary">{i.batch_no}</td>
-                      <td>{i.quantity_sold}</td>
-                      <td
-                        style={{
-                          fontFamily: "'DM Mono', monospace",
-                          fontSize: 12,
-                        }}
+                {sales.map((s, i) => (
+                  <tr key={i}>
+                    <td>{s.sale_id}</td>
+                    <td>{s.sale_date}</td>
+                    <td>{s.customer_name}</td>
+                    <td>{s.phone || s.customer_phone}</td>
+                    <td>{s.served_by_name || s.served_by}</td>
+                    <td>{parseFloat(s.total_amount || 0).toFixed(2)}</td>
+                    <td>
+                      <span className="badge badge-blue">{s.payment_mode}</span>
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${statusBadge(s.sale_status || s.status)}`}
                       >
-                        {i.unit_price.toFixed(2)}
-                      </td>
-                      <td>{i.discount_pct}%</td>
-                      <td
-                        style={{
-                          fontFamily: "'DM Mono', monospace",
-                          fontSize: 12,
-                          fontWeight: 700,
-                          color: "var(--teal)",
-                        }}
+                        {(s.sale_status || s.status || "").replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() =>
+                          setSelectedSale(
+                            selectedSale === s.sale_id ? null : s.sale_id,
+                          )
+                        }
                       >
-                        {i.subtotal.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {sales.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={9}
+                      style={{
+                        textAlign: "center",
+                        color: "#888",
+                        padding: 20,
+                      }}
+                    >
+                      No sales recorded yet.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      {selectedSale && (
+        <div className="card">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 10,
+            }}
+          >
+            <div className="section-title" style={{ marginBottom: 0 }}>
+              Sale #{selectedSale} — Items
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setSelectedSale(null)}
+            >
+              Close
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: "#888" }}>
+            Sale item details are stored in the <code>sale_item</code> table.
+            You can query{" "}
+            <code>SELECT * FROM sale_item WHERE sale_id = {selectedSale}</code>{" "}
+            in MySQL Workbench.
+          </p>
         </div>
       )}
 
       {showModal && (
         <NewSaleModal
+          medicines={medicines}
+          users={users}
           onClose={() => setShowModal(false)}
-          onSubmit={(data) => {
-            console.log(
-              "CALL sp_process_sale(",
-              data.customer_name,
-              data.customer_phone,
-              data.served_by,
-              data.payment_mode,
-              data.batch_item_id,
-              data.quantity_sold,
-              data.unit_price,
-              data.discount_pct,
-              ");",
-            );
-            setShowModal(false);
-            showToast("Sale completed successfully.", "success");
-          }}
+          onSubmit={handleSaleSubmit}
         />
       )}
     </div>

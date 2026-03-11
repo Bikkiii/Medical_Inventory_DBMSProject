@@ -1,14 +1,5 @@
-import { useState } from "react";
-import { stockLedger } from "../data/mockData.js";
-
-const TX_BADGE = {
-  purchase: "badge-teal",
-  sale: "badge-blue",
-  return_in: "badge-yellow",
-  damage_write_off: "badge-red",
-  return_out: "badge-orange",
-  adjustment: "badge-gray",
-};
+import { useState, useEffect } from "react";
+import { apiFetch } from "../api.js";
 
 const TYPES = [
   "all",
@@ -19,103 +10,135 @@ const TYPES = [
   "return_out",
 ];
 
-function Ledger() {
-  const [filter, setFilter] = useState("all");
+function txBadge(type) {
+  const map = {
+    purchase: "badge-green",
+    sale: "badge-blue",
+    return_in: "badge-yellow",
+    damage_write_off: "badge-red",
+    return_out: "badge-orange",
+  };
+  return map[type] || "badge-gray";
+}
 
-  const rows =
-    filter === "all"
-      ? stockLedger
-      : stockLedger.filter((r) => r.transaction_type === filter);
+function Ledger() {
+  const [ledger, setLedger] = useState([]);
+  const [filterType, setFilterType] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    apiFetch("/stock/ledger")
+      .then((data) => setLedger(data))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered =
+    filterType === "all"
+      ? ledger
+      : ledger.filter((r) => (r.transaction_type || r.txn_type) === filterType);
 
   return (
     <div>
       <div className="page-header">
-        <div className="page-header-left">
-          <h1>Stock Ledger</h1>
-          <p>Full immutable audit trail of all stock movements</p>
+        <div>
+          <h1>Stock Ledger (Audit Trail)</h1>
+          <p>
+            All stock movements from the <code>stock_ledger</code> table
+          </p>
         </div>
       </div>
 
+      {error && <div className="error-box">⚠ {error}</div>}
+
       <div className="card">
         <div className="filter-pills">
+          <span style={{ fontSize: 13, color: "#555", lineHeight: "28px" }}>
+            Filter:
+          </span>
           {TYPES.map((t) => (
             <button
               key={t}
-              className={`filter-pill ${filter === t ? "active" : ""}`}
-              onClick={() => setFilter(t)}
+              className={`filter-pill ${filterType === t ? "active" : ""}`}
+              onClick={() => setFilterType(t)}
             >
               {t === "all" ? "All" : t.replace(/_/g, " ")}
             </button>
           ))}
         </div>
 
-        <div className="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Medicine</th>
-                <th>Batch No</th>
-                <th>Transaction Type</th>
-                <th>Qty Change</th>
-                <th>Balance After</th>
-                <th>Done By</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.ledger_id}>
-                  <td className="td-muted">{row.ledger_id}</td>
-                  <td style={{ fontWeight: 500, color: "var(--text)" }}>
-                    {row.medicine_name}
-                  </td>
-                  <td className="td-primary">{row.batch_no}</td>
-                  <td>
-                    <span
-                      className={`badge ${TX_BADGE[row.transaction_type] || "badge-gray"}`}
-                    >
-                      {row.transaction_type.replace(/_/g, " ")}
-                    </span>
-                  </td>
-                  <td
-                    style={{
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: row.quantity_change > 0 ? "#166534" : "#991b1b",
-                    }}
-                  >
-                    {row.quantity_change > 0 ? "+" : ""}
-                    {row.quantity_change}
-                  </td>
-                  <td
-                    style={{
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 13,
-                      fontWeight: 600,
-                    }}
-                  >
-                    {row.balance_after}
-                  </td>
-                  <td className="td-muted">{row.transacted_by}</td>
-                  <td className="td-muted">{row.transacted_at}</td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
+        {loading ? (
+          <div className="loading">Loading ledger…</div>
+        ) : (
+          <div className="table-wrapper">
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={8}>
-                    <div className="empty-state">
-                      <p>No entries match this filter.</p>
-                    </div>
-                  </td>
+                  <th>Ledger ID</th>
+                  <th>Medicine</th>
+                  <th>Batch No</th>
+                  <th>Transaction Type</th>
+                  <th>Qty Change</th>
+                  <th>Balance After</th>
+                  <th>Done By</th>
+                  <th>Date</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-3)" }}>
-          Showing {rows.length} of {stockLedger.length} entries
+              </thead>
+              <tbody>
+                {filtered.map((row, i) => {
+                  const txType = row.transaction_type || row.txn_type || "";
+                  const change = row.quantity_change ?? row.qty_change ?? 0;
+                  return (
+                    <tr key={i}>
+                      <td>{row.ledger_id}</td>
+                      <td>{row.medicine_name}</td>
+                      <td>
+                        <span className="td-primary">{row.batch_no}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${txBadge(txType)}`}>
+                          {txType.replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td
+                        style={{
+                          color: change > 0 ? "green" : "red",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        {change > 0 ? "+" : ""}
+                        {change}
+                      </td>
+                      <td>
+                        <strong>{row.balance_after}</strong>
+                      </td>
+                      <td>{row.transacted_by || row.user_name}</td>
+                      <td>{row.transacted_at || row.created_at}</td>
+                    </tr>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      style={{
+                        textAlign: "center",
+                        color: "#888",
+                        padding: 20,
+                      }}
+                    >
+                      No entries found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: "#888", marginTop: 10 }}>
+          Showing {filtered.length} of {ledger.length} entries.
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./index.css";
 
 import Sidebar from "./components/Sidebar.jsx";
@@ -10,13 +10,23 @@ import Sales from "./pages/Sales.jsx";
 import Returns from "./pages/Returns.jsx";
 import Ledger from "./pages/Ledger.jsx";
 import Alerts from "./pages/Alerts.jsx";
-
-import { users } from "./data/mockData.js";
+import { apiFetch } from "./api.js";
 
 function App() {
   const [activePage, setActivePage] = useState("dashboard");
   const [toast, setToast] = useState({ message: "", type: "success" });
-  const currentUser = users[0];
+  const [currentUser, setCurrentUser] = useState({
+    full_name: "Admin User",
+    role: "admin",
+  });
+
+  useEffect(() => {
+    apiFetch("/users")
+      .then((users) => {
+        if (users[0]) setCurrentUser(users[0]);
+      })
+      .catch(() => {});
+  }, []);
 
   function showToast(message, type = "success") {
     setToast({ message, type });
