@@ -2,19 +2,23 @@ DROP DATABASE IF EXISTS medical_inventory_db;
 CREATE DATABASE medical_inventory_db;
 USE medical_inventory_db;
 
+-- ============================================================
+-- TABLE 1: user
+-- ============================================================
 CREATE TABLE user (
     user_id       INT          NOT NULL AUTO_INCREMENT,
     full_name     VARCHAR(100) NOT NULL,
     username      VARCHAR(50)  NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,                        -- hashed in backend (bcrypt)
     role          ENUM('admin','pharmacist') NOT NULL,
     is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
 );
 
-DESCRIBE user;
-
+-- ============================================================
+-- TABLE 2: supplier
+-- ============================================================
 CREATE TABLE supplier (
     supplier_id   INT          NOT NULL AUTO_INCREMENT,
     supplier_name VARCHAR(150) NOT NULL,
@@ -24,54 +28,49 @@ CREATE TABLE supplier (
     PRIMARY KEY (supplier_id)
 );
 
-describe supplier;
-
+-- ============================================================
+-- TABLE 3: medicine
+-- ============================================================
 CREATE TABLE medicine (
     medicine_id   INT          NOT NULL AUTO_INCREMENT,
     medicine_name VARCHAR(150) NOT NULL,
-    generic_name  VARCHAR(150) NULL,
     brand_name    VARCHAR(150) NULL,
     category      ENUM('antibiotic','analgesic','antiviral',
                        'vitamin','vaccine','topical','other') NOT NULL,
-    form          ENUM('tablet','capsule','syrup','injection',
-                       'ointment','drops','inhaler') NOT NULL,
     strength      VARCHAR(50)  NULL,
-    unit          ENUM('strip','bottle','vial','tube','box') NOT NULL,
-    reorder_level INT          NOT NULL DEFAULT 0,
+    reorder_level INT          NOT NULL DEFAULT 0,              -- threshold for low stock alert
     PRIMARY KEY (medicine_id)
 );
 
-describe medicine;
-
+-- ============================================================
+-- TABLE 4: batch
+-- No ordering concept — batch is entered when medicines arrive
+-- ============================================================
 CREATE TABLE batch (
     batch_id       INT           NOT NULL AUTO_INCREMENT,
     batch_no       VARCHAR(20)   NOT NULL UNIQUE,
     supplier_id    INT           NOT NULL,
-    ordered_by     INT           NOT NULL,
-    received_by    INT           NULL,
-    order_date     DATE          NOT NULL DEFAULT (CURRENT_DATE),
-    received_date  DATE          NULL,
+    received_by    INT           NOT NULL,                      -- who entered the batch
+    received_date  DATE          NOT NULL DEFAULT (CURRENT_DATE),
     invoice_no     VARCHAR(100)  NULL,
-    invoice_amount DECIMAL(10,2) NULL,
-    batch_status   ENUM('pending','received') NOT NULL DEFAULT 'pending',
+    invoice_amount DECIMAL(10,2) NULL CHECK (invoice_amount >= 0),
     notes          TEXT          NULL,
     PRIMARY KEY (batch_id),
     CONSTRAINT fk_batch_supplier
-        FOREIGN KEY (supplier_id) REFERENCES supplier(supplier_id),
-    CONSTRAINT fk_batch_ordered_by
-        FOREIGN KEY (ordered_by)  REFERENCES user(user_id),
+        FOREIGN KEY (supplier_id)  REFERENCES supplier(supplier_id),
     CONSTRAINT fk_batch_received_by
-        FOREIGN KEY (received_by) REFERENCES user(user_id)
+        FOREIGN KEY (received_by)  REFERENCES user(user_id)
 );
 
-describe batch;
-
+-- ============================================================
+-- TABLE 5: batch_item
+-- Each medicine in a batch
+-- ============================================================
 CREATE TABLE batch_item (
     batch_item_id     INT           NOT NULL AUTO_INCREMENT,
     batch_id          INT           NOT NULL,
     medicine_id       INT           NOT NULL,
-    quantity_ordered  INT           NOT NULL,
-    quantity_received INT           NOT NULL DEFAULT 0,
+    quantity_received INT           NOT NULL,                   -- actual quantity entered
     manufacture_date  DATE          NOT NULL,
     expiry_date       DATE          NOT NULL,
     unit_price        DECIMAL(10,2) NOT NULL,
@@ -79,25 +78,29 @@ CREATE TABLE batch_item (
     CONSTRAINT chk_batch_item_dates
         CHECK (expiry_date > manufacture_date),
     CONSTRAINT chk_quantity_received
-        CHECK (quantity_received <= quantity_ordered),
+        CHECK (quantity_received > 0),
     CONSTRAINT fk_batch_item_batch
         FOREIGN KEY (batch_id)    REFERENCES batch(batch_id),
     CONSTRAINT fk_batch_item_medicine
         FOREIGN KEY (medicine_id) REFERENCES medicine(medicine_id)
 );
 
-DESCRIBE batch_item;
-
+-- ============================================================
+-- TABLE 6: stock_ledger
+-- Full audit trail of every stock movement
+-- reference_id points to: batch(batch_id) for purchase,
+--                          sale(sale_id) for sale,
+--                          return(return_id) for return/damage
+-- ============================================================
 CREATE TABLE stock_ledger (
     ledger_id        INT       NOT NULL AUTO_INCREMENT,
-    medicine_id      INT       NOT NULL,
+    medicine_id      INT       NOT NULL,                        -- redundant but simplifies queries
     batch_item_id    INT       NOT NULL,
     transaction_type ENUM('purchase','sale','return_in',
-                          'return_out','damage_write_off',
-                          'adjustment') NOT NULL,
-    quantity_change  INT       NOT NULL,
+                          'return_out','damage_write_off') NOT NULL,
+    quantity_change  INT       NOT NULL,                        -- positive = stock in, negative = stock out
     balance_after    INT       NOT NULL,
-    reference_id     INT       NULL,
+    reference_id     INT       NULL,                            -- points to batch/sale/return depending on transaction_type
     transacted_by    INT       NOT NULL,
     transacted_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (ledger_id),
@@ -111,8 +114,9 @@ CREATE TABLE stock_ledger (
         FOREIGN KEY (transacted_by) REFERENCES user(user_id)
 );
 
-describe stock_ledger;
-
+-- ============================================================
+-- TABLE 7: sale
+-- ============================================================
 CREATE TABLE sale (
     sale_id        INT           NOT NULL AUTO_INCREMENT,
     sale_date      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -128,8 +132,10 @@ CREATE TABLE sale (
         FOREIGN KEY (served_by) REFERENCES user(user_id)
 );
 
-DESCRIBE sale;
-
+-- ============================================================
+-- TABLE 8: sale_item
+-- Each medicine line in a sale
+-- ============================================================
 CREATE TABLE sale_item (
     sale_item_id  INT           NOT NULL AUTO_INCREMENT,
     sale_id       INT           NOT NULL,
@@ -150,42 +156,40 @@ CREATE TABLE sale_item (
         FOREIGN KEY (medicine_id)   REFERENCES medicine(medicine_id)
 );
 
-DESCRIBE sale_item;
-
+-- ============================================================
+-- TABLE 9: return
+-- Unified table for customer returns and damage reports
+-- sale_item_id is NULL for damage_report type
+-- damage_cause is NULL for customer_return type
+-- resolution drives trigger logic — keep as ENUM
+-- ============================================================
 CREATE TABLE `return` (
-    return_id           INT           NOT NULL AUTO_INCREMENT,
-    return_type         ENUM('customer_return','damage_report',
-                             'supplier_return') NOT NULL,
-    return_date         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    sale_item_id        INT           NULL,
-    batch_item_id       INT           NOT NULL,
-    medicine_id         INT           NOT NULL,
-    quantity_returned   INT           NOT NULL,
-    reason              ENUM('wrong_medicine','damaged','expired',
-                             'side_effect','other') NOT NULL,
-    damage_cause        ENUM('transit','storage','expiry',
-                             'handling','other') NULL,
-    resolution          ENUM('refund','replacement','write_off',
-                             'return_to_supplier','pending')
-                        NOT NULL DEFAULT 'pending',
-    replacement_sale_id INT           NULL,
-    refund_amount       DECIMAL(10,2) NULL,
-    processed_by        INT           NOT NULL,
+    return_id         INT           NOT NULL AUTO_INCREMENT,
+    return_type       ENUM('customer_return','damage_report',
+                           'supplier_return') NOT NULL,
+    return_date       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sale_item_id      INT           NULL,                       -- NULL for damage_report
+    batch_item_id     INT           NOT NULL,
+    medicine_id       INT           NOT NULL,
+    quantity_returned INT           NOT NULL,
+    reason            VARCHAR(100)  NOT NULL,                   -- plain text: flexible
+    damage_cause      VARCHAR(100)  NULL,                       -- plain text: only for damage_report
+    resolution        ENUM('refund','replacement','write_off',
+                           'return_to_supplier','pending')
+                      NOT NULL DEFAULT 'pending',               -- drives trigger stock logic
+    refund_amount     DECIMAL(10,2) NULL,                       -- only for refund resolution
+    processed_by      INT           NOT NULL,
     PRIMARY KEY (return_id),
     CONSTRAINT chk_quantity_returned
         CHECK (quantity_returned > 0),
     CONSTRAINT fk_return_sale_item
-        FOREIGN KEY (sale_item_id)        REFERENCES sale_item(sale_item_id),
+        FOREIGN KEY (sale_item_id)  REFERENCES sale_item(sale_item_id),
     CONSTRAINT fk_return_batch_item
-        FOREIGN KEY (batch_item_id)       REFERENCES batch_item(batch_item_id),
+        FOREIGN KEY (batch_item_id) REFERENCES batch_item(batch_item_id),
     CONSTRAINT fk_return_medicine
-        FOREIGN KEY (medicine_id)         REFERENCES medicine(medicine_id),
-    CONSTRAINT fk_return_replacement_sale
-        FOREIGN KEY (replacement_sale_id) REFERENCES sale(sale_id),
+        FOREIGN KEY (medicine_id)   REFERENCES medicine(medicine_id),
     CONSTRAINT fk_return_processed_by
-        FOREIGN KEY (processed_by)        REFERENCES user(user_id)
+        FOREIGN KEY (processed_by)  REFERENCES user(user_id)
 );
 
-DESCRIBE `return`;
-
-show tables;
+SHOW TABLES;
