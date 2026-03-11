@@ -3,6 +3,8 @@ USE medical_inventory_db;
 -- ============================================================
 -- PROCEDURE 1: sp_process_sale
 -- Processes a single medicine sale
+-- FIX: Added check that medicine is_active = TRUE before selling
+--      An inactive (discontinued) medicine must not be sold
 -- CONCURRENCY: Transaction + FOR UPDATE lock on stock_ledger
 -- Prevents two pharmacists selling the same stock simultaneously
 -- The trigger trg_before_sale_item_insert also locks — but
@@ -23,15 +25,27 @@ CREATE PROCEDURE sp_process_sale(
     IN p_discount_pct   DECIMAL(5,2)
 )
 BEGIN
-    DECLARE v_sale_id      INT;
-    DECLARE v_subtotal     DECIMAL(10,2);
-    DECLARE v_stock        INT;
-    DECLARE v_error        TINYINT DEFAULT 0;
+    DECLARE v_sale_id        INT;
+    DECLARE v_subtotal       DECIMAL(10,2);
+    DECLARE v_stock          INT;
+    DECLARE v_medicine_active TINYINT DEFAULT 1;
+    DECLARE v_error          TINYINT DEFAULT 0;
 
     -- Catch any SQL error and set flag for rollback
     DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SET v_error = 1;
 
     SET v_subtotal = p_quantity_sold * p_unit_price * (1 - p_discount_pct / 100);
+
+    -- FIX: Check medicine is still active before starting transaction
+    -- Inactive = discontinued medicine, should not be sold
+    SELECT is_active INTO v_medicine_active
+    FROM medicine
+    WHERE medicine_id = p_medicine_id;
+
+    IF v_medicine_active = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Sale failed: this medicine has been discontinued and cannot be sold.';
+    END IF;
 
     START TRANSACTION;
 
@@ -92,6 +106,9 @@ DELIMITER ;
 -- PROCEDURE 2: sp_process_return
 -- Handles customer returns (wrong medicine, damaged, etc.)
 -- Updates sale_status based on how much was returned
+-- NOTE: Returns are allowed even if medicine is inactive
+--       because the original sale already happened.
+--       is_active only blocks NEW sales, not returns.
 -- CONCURRENCY: Transaction ensures return record and
 -- stock ledger update happen atomically
 -- Manual COMMIT/ROLLBACK for full control
@@ -169,6 +186,8 @@ DELIMITER ;
 -- PROCEDURE 3: sp_report_damage
 -- Reports damaged or expired medicines (pre-sale damage)
 -- Reduces stock via write_off or return_to_supplier resolution
+-- NOTE: Damage reports are allowed even if medicine is inactive
+--       because the stock physically exists and must be written off
 -- CONCURRENCY: Transaction + trigger lock protects against
 -- concurrent damage reports on the same batch_item
 -- Manual COMMIT/ROLLBACK for full control
@@ -215,6 +234,71 @@ BEGIN
     ELSE
         COMMIT;
     END IF;
+
+END$$
+
+DELIMITER ;
+
+
+-- ============================================================
+-- PROCEDURE 4: sp_deactivate_supplier
+-- FIX: Soft delete a supplier instead of hard deleting
+-- Sets is_active = FALSE so supplier is hidden from new batch
+-- dropdowns but all historical batch/return records are preserved
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_deactivate_supplier(
+    IN p_supplier_id INT
+)
+BEGIN
+    DECLARE v_exists INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_exists
+    FROM supplier
+    WHERE supplier_id = p_supplier_id;
+
+    IF v_exists = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Deactivation failed: supplier not found.';
+    END IF;
+
+    UPDATE supplier
+    SET is_active = FALSE
+    WHERE supplier_id = p_supplier_id;
+
+END$$
+
+DELIMITER ;
+
+
+-- ============================================================
+-- PROCEDURE 5: sp_deactivate_medicine
+-- FIX: Soft delete a medicine instead of hard deleting
+-- Sets is_active = FALSE so medicine is hidden from new sale
+-- dropdowns but all historical sale/return/ledger records are preserved
+-- sp_process_sale checks is_active before allowing any new sale
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_deactivate_medicine(
+    IN p_medicine_id INT
+)
+BEGIN
+    DECLARE v_exists INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_exists
+    FROM medicine
+    WHERE medicine_id = p_medicine_id;
+
+    IF v_exists = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Deactivation failed: medicine not found.';
+    END IF;
+
+    UPDATE medicine
+    SET is_active = FALSE
+    WHERE medicine_id = p_medicine_id;
 
 END$$
 

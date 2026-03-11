@@ -10,6 +10,36 @@ DROP TRIGGER IF EXISTS trg_before_sale_item_insert;
 DROP TRIGGER IF EXISTS trg_after_sale_item_insert;
 DROP TRIGGER IF EXISTS trg_before_return_insert;
 DROP TRIGGER IF EXISTS trg_after_return_insert;
+DROP TRIGGER IF EXISTS trg_before_batch_item_insert;
+
+
+-- ============================================================
+-- TRIGGER 0: trg_before_batch_item_insert
+-- FIX: Block adding a batch_item for an inactive medicine
+--      A discontinued medicine (is_active=FALSE) must not receive
+--      new stock. Supplier is not checked here because a batch
+--      from an inactive supplier is blocked at the batch creation
+--      level by the backend/frontend, not at batch_item level.
+-- ============================================================
+DELIMITER $$
+
+CREATE TRIGGER trg_before_batch_item_insert
+BEFORE INSERT ON batch_item
+FOR EACH ROW
+BEGIN
+    DECLARE v_medicine_active TINYINT DEFAULT 1;
+
+    SELECT is_active INTO v_medicine_active
+    FROM medicine
+    WHERE medicine_id = NEW.medicine_id;
+
+    IF v_medicine_active = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Cannot add stock: this medicine has been discontinued (is_active = FALSE).';
+    END IF;
+END$$
+
+DELIMITER ;
 
 
 -- ============================================================
@@ -104,8 +134,10 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 4: trg_before_sale_item_insert
--- No change needed — SELECT into variable is fine in BEFORE trigger
--- (not inserting into stock_ledger here, only reading)
+-- FIX: Added medicine is_active check
+-- Blocks selling a discontinued medicine even if someone
+-- bypasses sp_process_sale and inserts directly into sale_item
+-- Also checks stock availability as before
 -- ============================================================
 DELIMITER $$
 
@@ -113,8 +145,20 @@ CREATE TRIGGER trg_before_sale_item_insert
 BEFORE INSERT ON sale_item
 FOR EACH ROW
 BEGIN
-    DECLARE v_current_stock INT;
+    DECLARE v_current_stock   INT;
+    DECLARE v_medicine_active TINYINT DEFAULT 1;
 
+    -- FIX: Check medicine is still active
+    SELECT is_active INTO v_medicine_active
+    FROM medicine
+    WHERE medicine_id = NEW.medicine_id;
+
+    IF v_medicine_active = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Sale blocked: this medicine has been discontinued (is_active = FALSE).';
+    END IF;
+
+    -- Original stock check
     SELECT COALESCE(SUM(quantity_change), 0)
     INTO   v_current_stock
     FROM   stock_ledger
@@ -185,7 +229,10 @@ DELIMITER ;
 
 -- ============================================================
 -- TRIGGER 6: trg_before_return_insert
--- No change needed — SELECT into variable is fine in BEFORE trigger
+-- No change needed for is_active here:
+-- Returns are allowed on inactive medicines because the
+-- original sale already happened. Blocking returns on inactive
+-- medicines would prevent legitimate refunds/write-offs.
 -- ============================================================
 DELIMITER $$
 

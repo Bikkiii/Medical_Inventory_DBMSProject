@@ -18,6 +18,10 @@ CREATE TABLE user (
 
 -- ============================================================
 -- TABLE 2: supplier
+-- FIX: Added is_active for soft delete
+-- Never hard delete a supplier — deactivate instead
+-- Inactive suppliers are hidden from new batch dropdowns
+-- but all historical batch/return records remain fully traceable
 -- ============================================================
 CREATE TABLE supplier (
     supplier_id   INT          NOT NULL AUTO_INCREMENT,
@@ -25,11 +29,16 @@ CREATE TABLE supplier (
     phone         VARCHAR(20)  NOT NULL,
     email         VARCHAR(100) NULL,
     address       TEXT         NULL,
+    is_active     BOOLEAN      NOT NULL DEFAULT TRUE,           -- FIX: soft delete flag
     PRIMARY KEY (supplier_id)
 );
 
 -- ============================================================
 -- TABLE 3: medicine
+-- FIX: Added is_active for soft delete
+-- Never hard delete a medicine — deactivate instead
+-- Discontinued medicines remain in historical sale/return records
+-- but are hidden from new sale dropdowns
 -- ============================================================
 CREATE TABLE medicine (
     medicine_id   INT          NOT NULL AUTO_INCREMENT,
@@ -39,6 +48,7 @@ CREATE TABLE medicine (
                        'vitamin','vaccine','topical','other') NOT NULL,
     strength      VARCHAR(50)  NULL,
     reorder_level INT          NOT NULL DEFAULT 0,              -- threshold for low stock alert
+    is_active     BOOLEAN      NOT NULL DEFAULT TRUE,           -- FIX: soft delete flag
     PRIMARY KEY (medicine_id)
 );
 

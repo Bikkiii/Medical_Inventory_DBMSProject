@@ -25,6 +25,12 @@
 --              3=VitC damage write_off(no sale)
 --              4=Clot supplier_return(no sale)
 --              5=Sita Ibup pending(si2)
+--
+-- FIX DEMO:
+--   supplier_id=4 (GlobalMed) → deactivated after batch insert
+--   medicine_id=10 (Insulin)  → deactivated after batch insert
+--   Both still traceable in batch/stock_ledger history
+--   Neither appears in vw_active_suppliers / vw_active_medicines
 -- ============================================================
 
 USE medical_inventory_db;
@@ -45,43 +51,47 @@ INSERT INTO user (full_name, username, password_hash, role, is_active) VALUES
 
 -- ============================================================
 -- 2. SUPPLIERS
+-- FIX: is_active column now included
+-- supplier_id=4 (GlobalMed) will be deactivated later
+-- to simulate a supplier we stopped working with
 -- ============================================================
-INSERT INTO supplier (supplier_name, phone, email, address) VALUES
+INSERT INTO supplier (supplier_name, phone, email, address, is_active) VALUES
 -- supplier_id=1
-('MedSupply Co.',     '9800000001', 'contact@medsupply.com',  'Kathmandu, Nepal'),
+('MedSupply Co.',     '9800000001', 'contact@medsupply.com',  'Kathmandu, Nepal',  TRUE),
 -- supplier_id=2
-('PharmaDist Ltd.',   '9800000002', 'info@pharmadist.com',    'Lalitpur, Nepal'),
+('PharmaDist Ltd.',   '9800000002', 'info@pharmadist.com',    'Lalitpur, Nepal',   TRUE),
 -- supplier_id=3
-('HealthSource Pvt.', '9800000003', 'sales@healthsource.com', 'Bhaktapur, Nepal'),
--- supplier_id=4
-('GlobalMed Imports', '9800000004', NULL,                      'Pokhara, Nepal');
+('HealthSource Pvt.', '9800000003', 'sales@healthsource.com', 'Bhaktapur, Nepal',  TRUE),
+-- supplier_id=4 — will be deactivated below
+('GlobalMed Imports', '9800000004', NULL,                      'Pokhara, Nepal',   TRUE);
 
 -- ============================================================
 -- 3. MEDICINES
--- category ENUM: 'antibiotic' | 'analgesic' | 'antiviral'
---                'vitamin' | 'vaccine' | 'topical' | 'other'
+-- FIX: is_active column now included
+-- medicine_id=10 (Insulin Glargine) will be deactivated later
+-- to simulate a discontinued medicine
 -- ============================================================
-INSERT INTO medicine (medicine_name, brand_name, category, strength, reorder_level) VALUES
+INSERT INTO medicine (medicine_name, brand_name, category, strength, reorder_level, is_active) VALUES
 -- medicine_id=1
-('Amoxicillin',      'Amoxil',     'antibiotic', '500mg',   100),
+('Amoxicillin',      'Amoxil',     'antibiotic', '500mg',   100, TRUE),
 -- medicine_id=2
-('Paracetamol',      'Calpol',     'analgesic',  '500mg',   150),
+('Paracetamol',      'Calpol',     'analgesic',  '500mg',   150, TRUE),
 -- medicine_id=3
-('Ibuprofen',        'Brufen',     'analgesic',  '400mg',   100),
+('Ibuprofen',        'Brufen',     'analgesic',  '400mg',   100, TRUE),
 -- medicine_id=4
-('Azithromycin',     'Zithromax',  'antibiotic', '250mg',    80),
+('Azithromycin',     'Zithromax',  'antibiotic', '250mg',    80, TRUE),
 -- medicine_id=5
-('Oseltamivir',      'Tamiflu',    'antiviral',  '75mg',     50),
+('Oseltamivir',      'Tamiflu',    'antiviral',  '75mg',     50, TRUE),
 -- medicine_id=6
-('Vitamin C',        'Celin',      'vitamin',    '500mg',   200),
+('Vitamin C',        'Celin',      'vitamin',    '500mg',   200, TRUE),
 -- medicine_id=7
-('Hepatitis B',      'Engerix-B',  'vaccine',    '20mcg',    30),
+('Hepatitis B',      'Engerix-B',  'vaccine',    '20mcg',    30, TRUE),
 -- medicine_id=8
-('Clotrimazole',     'Canesten',   'topical',    '1%',       60),
+('Clotrimazole',     'Canesten',   'topical',    '1%',       60, TRUE),
 -- medicine_id=9
-('Metformin',        'Glucophage', 'other',      '500mg',   120),
--- medicine_id=10
-('Insulin Glargine', 'Lantus',     'other',      '100U/mL',  40);
+('Metformin',        'Glucophage', 'other',      '500mg',   120, TRUE),
+-- medicine_id=10 — will be deactivated below
+('Insulin Glargine', 'Lantus',     'other',      '100U/mL',  40, TRUE);
 
 -- ============================================================
 -- 4. BATCHES
@@ -103,6 +113,7 @@ INSERT INTO batch (batch_no, supplier_id, received_by, received_date, invoice_no
 -- ============================================================
 -- 5. BATCH ITEMS
 -- Triggers fired per INSERT:
+--   trg_before_batch_item_insert        → blocks inactive medicine  (FIX)
 --   trg_after_batch_item_insert         → writes 'purchase' to stock_ledger
 --   trg_after_insert_batch_item_invoice → adds cost to batch.invoice_amount
 -- Constraints:
@@ -148,6 +159,7 @@ INSERT INTO batch_item (batch_id, medicine_id, quantity_received, manufacture_da
 
 -- BATCH 5 (batch_id=5) — GlobalMed | received by admin
 -- Insulin 30 units, reorder_level=40 → appears in vw_low_stock
+-- NOTE: Insulin will be deactivated after this insert — batch/stock history stays intact
 INSERT INTO batch_item (batch_id, medicine_id, quantity_received, manufacture_date, expiry_date, unit_price) VALUES
 -- batch_item_id=10 | Hepatitis B vaccine | stock → 50
 (5, 7,  50, '2024-12-01', '2026-12-01', 45.00),
@@ -156,26 +168,43 @@ INSERT INTO batch_item (batch_id, medicine_id, quantity_received, manufacture_da
 -- invoice_amount batch_5 = (50×45)+(30×95) = 2250+2850 = 5100.00
 
 -- ============================================================
+-- FIX: Soft delete GlobalMed supplier and Insulin medicine
+-- Done AFTER batch/batch_item inserts so historical data exists
+-- GlobalMed → deactivated (no longer supplying)
+-- Insulin   → deactivated (discontinued product)
+--
+-- Effect on views:
+--   vw_active_suppliers → GlobalMed no longer appears
+--   vw_active_medicines → Insulin no longer appears
+--   vw_current_stock    → both still visible (stock must be managed)
+--   vw_expiry_alert     → still visible if expiring
+--   vw_low_stock        → Insulin no longer triggers alert (FIX)
+--
+-- Effect on procedures:
+--   sp_process_sale with medicine_id=10 → blocked (discontinued)
+--   sp_report_damage with batch_item_id=11 → still allowed (write off real stock)
+-- ============================================================
+CALL sp_deactivate_supplier(4);  -- GlobalMed Imports
+CALL sp_deactivate_medicine(10); -- Insulin Glargine
+
+-- ============================================================
 -- STOCK LEDGER AFTER ALL PURCHASES (11 'purchase' rows auto-inserted by trigger):
--- bi_id | medicine          | stock
---  1    | Amoxicillin       |  300
---  2    | Paracetamol       |  500
---  3    | Ibuprofen         |  200
---  4    | Vitamin C         |  400
---  5    | Clotrimazole      |  150
---  6    | Azithromycin      |  180
---  7    | Oseltamivir       |   80
---  8    | Paracetamol(exp)  |   60
---  9    | Metformin         |  250
--- 10    | Hepatitis B       |   50
--- 11    | Insulin Glargine  |   30
+-- ledger_id | batch_item_id | medicine          | qty_change | balance_after
+--     1     |      1        | Amoxicillin       |   +300     |   300
+--     2     |      2        | Paracetamol       |   +500     |   500
+--     3     |      3        | Ibuprofen         |   +200     |   200
+--     4     |      4        | Vitamin C         |   +400     |   400
+--     5     |      5        | Clotrimazole      |   +150     |   150
+--     6     |      6        | Azithromycin      |   +180     |   180
+--     7     |      7        | Oseltamivir       |    +80     |    80
+--     8     |      8        | Paracetamol(exp)  |    +60     |    60
+--     9     |      9        | Metformin         |   +250     |   250
+--    10     |     10        | Hepatitis B       |    +50     |    50
+--    11     |     11        | Insulin Glargine  |    +30     |    30
 -- ============================================================
 
 -- ============================================================
 -- 6. SALES
--- total_amount manually matches sale_items subtotals below
--- sale_status set to final state directly for dummy consistency
--- served_by: 2=john_pharma, 3=sara_pharma
 -- ============================================================
 INSERT INTO sale (customer_name, customer_phone, served_by, total_amount, payment_mode, sale_status) VALUES
 -- sale_id=1
@@ -192,9 +221,10 @@ INSERT INTO sale (customer_name, customer_phone, served_by, total_amount, paymen
 -- ============================================================
 -- 7. SALE ITEMS
 -- Triggers fired per INSERT:
---   trg_before_sale_item_insert → checks stock (FOR UPDATE lock)
+--   trg_before_sale_item_insert → checks medicine is_active (FIX) + checks stock
 --   trg_after_sale_item_insert  → deducts stock in stock_ledger
 -- subtotal = quantity_sold × unit_price × (1 − discount_pct/100)
+-- NOTE: All sale_items use active medicines only
 -- ============================================================
 
 -- sale_id=1 | Ram | Amoxicillin
@@ -247,7 +277,7 @@ INSERT INTO sale_item (sale_id, batch_item_id, medicine_id, quantity_sold, unit_
 --  8    | Paracetamol(exp)  |   60  (unsold)
 --  9    | Metformin         |  250  (unsold)
 -- 10    | Hepatitis B       |   50  (unsold)
--- 11    | Insulin Glargine  |   30  (unsold)
+-- 11    | Insulin Glargine  |   30  (unsold, medicine inactive)
 -- ============================================================
 
 -- ============================================================
@@ -255,6 +285,7 @@ INSERT INTO sale_item (sale_id, batch_item_id, medicine_id, quantity_sold, unit_
 -- Triggers fired per INSERT:
 --   trg_before_return_insert → locks stock for write_off/return_to_supplier
 --   trg_after_return_insert  → adjusts stock_ledger per resolution
+-- NOTE: Returns work even if medicine is inactive (stock physically exists)
 -- ============================================================
 
 -- return_id=1 | Hari returned 5 Paracetamol | refund
@@ -300,7 +331,7 @@ INSERT INTO `return` (return_type, sale_item_id, batch_item_id, medicine_id, qua
 --  8    | Paracetamol(exp)  |   60  → expiry alert
 --  9    | Metformin         |  250
 -- 10    | Hepatitis B       |   50
--- 11    | Insulin Glargine  |   30  → low stock (reorder=40)
+-- 11    | Insulin Glargine  |   30  → inactive medicine, no low_stock alert (FIX)
 -- ============================================================
 
 -- ============================================================
@@ -316,6 +347,10 @@ SELECT 'SALES'        AS entity, COUNT(*) AS total FROM sale;
 SELECT 'SALE ITEMS'   AS entity, COUNT(*) AS total FROM sale_item;
 SELECT 'RETURNS'      AS entity, COUNT(*) AS total FROM `return`;
 
+-- FIX: Verify is_active flags
+SELECT supplier_id, supplier_name, is_active FROM supplier ORDER BY supplier_id;
+SELECT medicine_id, medicine_name, is_active FROM medicine ORDER BY medicine_id;
+
 -- Invoice amounts auto-set by trigger
 SELECT batch_id, batch_no, invoice_amount FROM batch ORDER BY batch_id;
 
@@ -326,15 +361,22 @@ FROM stock_ledger sl
 JOIN medicine m ON m.medicine_id = sl.medicine_id
 ORDER BY sl.ledger_id;
 
--- Live stock per batch_item
-SELECT medicine_name, batch_no, current_stock, expiry_status, stock_status
+-- Live stock per batch_item (includes inactive medicine/supplier flags)
+SELECT medicine_name, medicine_active, supplier_name, supplier_active,
+       batch_no, current_stock, expiry_status, stock_status
 FROM vw_current_stock
 ORDER BY medicine_name;
+
+-- Active medicines only (for sale dropdown)
+SELECT * FROM vw_active_medicines ORDER BY medicine_name;
+
+-- Active suppliers only (for new batch dropdown)
+SELECT * FROM vw_active_suppliers ORDER BY supplier_name;
 
 -- Expiry alerts (within 90 days)
 SELECT medicine_name, batch_no, days_until_expiry, current_stock, alert_level
 FROM vw_expiry_alert;
 
--- Low stock alerts
+-- Low stock alerts (active medicines only — Insulin excluded)
 SELECT medicine_name, total_stock, reorder_level, shortage_quantity, stock_alert
 FROM vw_low_stock;
