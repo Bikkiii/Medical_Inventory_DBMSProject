@@ -1,70 +1,86 @@
-import { useState, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { ToastProvider } from "./context/ToastContext";
+
+import Sidebar from "./components/Sidebar";
+import LoginPage from "./pages/LoginPage";
+import Dashboard from "./pages/Dashboard";
+import StockPage from "./pages/StockPage";
+import { BatchesPage, AddBatchPage } from "./pages/BatchesPage";
+import { SalesPage, NewSalePage } from "./pages/SalesPage";
+import { ReturnsListPage, CustomerReturnPage, DamageReportPage } from "./pages/ReturnsPages";
+import LedgerPage from "./pages/LedgerPage";
+import MedicinesPage from "./pages/MedicinesPage";
+import SuppliersPage from "./pages/SuppliersPage";
+import UsersPage from "./pages/UsersPage";
+
 import "./index.css";
 
-import Sidebar from "./components/Sidebar.jsx";
-import Toast from "./components/Toast.jsx";
-import Dashboard from "./pages/Dashboard.jsx";
-import Stock from "./pages/Stock.jsx";
-import Batches from "./pages/Batches.jsx";
-import Sales from "./pages/Sales.jsx";
-import Returns from "./pages/Returns.jsx";
-import Ledger from "./pages/Ledger.jsx";
-import Alerts from "./pages/Alerts.jsx";
-import { apiFetch } from "./api.js";
-
-function App() {
-  const [activePage, setActivePage] = useState("dashboard");
-  const [toast, setToast] = useState({ message: "", type: "success" });
-  const [currentUser, setCurrentUser] = useState({
-    full_name: "Admin User",
-    role: "admin",
-  });
-
-  useEffect(() => {
-    apiFetch("/users")
-      .then((users) => {
-        if (users[0]) setCurrentUser(users[0]);
-      })
-      .catch(() => {});
-  }, []);
-
-  function showToast(message, type = "success") {
-    setToast({ message, type });
-    setTimeout(() => setToast({ message: "", type: "success" }), 3000);
-  }
-
-  function renderPage() {
-    switch (activePage) {
-      case "dashboard":
-        return <Dashboard />;
-      case "stock":
-        return <Stock showToast={showToast} />;
-      case "batches":
-        return <Batches showToast={showToast} />;
-      case "sales":
-        return <Sales showToast={showToast} />;
-      case "returns":
-        return <Returns showToast={showToast} />;
-      case "ledger":
-        return <Ledger />;
-      case "alerts":
-        return <Alerts />;
-      default:
-        return <Dashboard />;
-    }
-  }
-
+// Layout wrapper for authenticated pages
+function AppLayout({ children }) {
   return (
     <div className="app-container">
-      <Sidebar
-        activePage={activePage}
-        setActivePage={setActivePage}
-        currentUser={currentUser}
-      />
-      <div className="main-content">{renderPage()}</div>
-      <Toast message={toast.message} type={toast.type} />
+      <Sidebar />
+      <div className="main-content">{children}</div>
     </div>
   );
 }
 
-export default App;
+// Protected route — redirects to /login if not authenticated
+function ProtectedRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="loading" style={{ marginTop: "40vh" }}>Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return <AppLayout>{children}</AppLayout>;
+}
+
+// Admin-only route — redirects to / if not admin
+function AdminRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== "admin") return <Navigate to="/" replace />;
+  return <AppLayout>{children}</AppLayout>;
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+
+      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/stock"   element={<ProtectedRoute><StockPage /></ProtectedRoute>} />
+
+      <Route path="/batches"     element={<ProtectedRoute><BatchesPage /></ProtectedRoute>} />
+      <Route path="/batches/new" element={<ProtectedRoute><AddBatchPage /></ProtectedRoute>} />
+
+      <Route path="/sales"     element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
+      <Route path="/sales/new" element={<ProtectedRoute><NewSalePage /></ProtectedRoute>} />
+
+      <Route path="/returns"           element={<ProtectedRoute><ReturnsListPage /></ProtectedRoute>} />
+      <Route path="/returns/customer"  element={<ProtectedRoute><CustomerReturnPage /></ProtectedRoute>} />
+      <Route path="/returns/damage"    element={<ProtectedRoute><DamageReportPage /></ProtectedRoute>} />
+
+      <Route path="/ledger" element={<ProtectedRoute><LedgerPage /></ProtectedRoute>} />
+
+      <Route path="/medicines" element={<AdminRoute><MedicinesPage /></AdminRoute>} />
+      <Route path="/suppliers" element={<AdminRoute><SuppliersPage /></AdminRoute>} />
+      <Route path="/users"     element={<AdminRoute><UsersPage /></AdminRoute>} />
+
+      {/* Catch-all */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <ToastProvider>
+          <AppRoutes />
+        </ToastProvider>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

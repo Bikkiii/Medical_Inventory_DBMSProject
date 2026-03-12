@@ -1,14 +1,21 @@
-const NAV = [
-  { id: "dashboard", label: "Dashboard", icon: "⊞" },
-  { id: "stock", label: "Stock", icon: "◫" },
-  { id: "batches", label: "Batches", icon: "⊟" },
-  { id: "sales", label: "Sales", icon: "⊕" },
-  { id: "returns", label: "Returns", icon: "↩" },
-  { id: "ledger", label: "Ledger", icon: "≡" },
-  { id: "alerts", label: "Alerts", icon: "⚠" },
-];
+import { NavLink } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
-function Sidebar({ activePage, setActivePage, currentUser }) {
+function NavItem({ to, icon, label }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+    >
+      <span className="nav-icon">{icon}</span>
+      {label}
+    </NavLink>
+  );
+}
+
+export default function Sidebar() {
+  const { user, logout } = useAuth();
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -20,27 +27,35 @@ function Sidebar({ activePage, setActivePage, currentUser }) {
       </div>
 
       <nav>
-        <div className="nav-section-label">Navigation</div>
-        {NAV.map((n) => (
-          <button
-            key={n.id}
-            className={`nav-link ${activePage === n.id ? "active" : ""}`}
-            onClick={() => setActivePage(n.id)}
-          >
-            <span className="nav-icon">{n.icon}</span>
-            {n.label}
-          </button>
-        ))}
+        <div className="nav-section-label">Main</div>
+        <NavItem to="/"       icon="⊞" label="Dashboard" />
+        <NavItem to="/stock"  icon="◫" label="Stock" />
+        <NavItem to="/batches" icon="⊟" label="Batches" />
+        <NavItem to="/sales"  icon="⊕" label="Sales" />
+
+        <div className="nav-section-label">Returns</div>
+        <NavItem to="/returns/customer" icon="↩" label="Customer Return" />
+        <NavItem to="/returns/damage"   icon="⚠" label="Damage Report" />
+        <NavItem to="/returns"          icon="≡" label="Returns List" />
+
+        <div className="nav-section-label">Audit</div>
+        <NavItem to="/ledger" icon="📋" label="Stock Ledger" />
+
+        {user?.role === "admin" && (
+          <>
+            <div className="nav-section-label">Admin</div>
+            <NavItem to="/medicines" icon="💊" label="Medicines" />
+            <NavItem to="/suppliers" icon="🏭" label="Suppliers" />
+            <NavItem to="/users"     icon="👤" label="Users" />
+          </>
+        )}
       </nav>
 
       <div className="sidebar-footer">
-        <div className="user-name">
-          {currentUser?.full_name || "Admin User"}
-        </div>
-        <div className="user-role">{currentUser?.role || "admin"}</div>
+        <div className="user-name">{user?.full_name || "—"}</div>
+        <div className="user-role">{user?.role || "—"}</div>
+        <button className="logout-btn" onClick={logout}>⏻ Logout</button>
       </div>
     </aside>
   );
 }
-
-export default Sidebar;

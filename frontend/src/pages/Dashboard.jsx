@@ -1,58 +1,39 @@
 import { useState, useEffect } from "react";
-import { apiFetch } from "../api.js";
+import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../api";
 
-function txBadge(type) {
-  const map = {
-    purchase: "badge-green",
-    sale: "badge-blue",
-    return_in: "badge-yellow",
-    damage_write_off: "badge-red",
-    return_out: "badge-orange",
-  };
-  return map[type] || "badge-gray";
-}
+const alertColor = {
+  "EXPIRED":            "badge-red",
+  "EXPIRING IN 30 DAYS":"badge-orange",
+  "EXPIRING IN 60 DAYS":"badge-yellow",
+  "EXPIRING IN 90 DAYS":"badge-yellow",
+};
+const stockColor = { "OUT OF STOCK": "badge-red", "LOW STOCK": "badge-orange" };
 
-function Dashboard() {
-  const [ledger, setLedger] = useState([]);
-  const [expiry, setExpiry] = useState([]);
+export default function Dashboard() {
+  const [expiry, setExpiry]     = useState([]);
   const [lowStock, setLowStock] = useState([]);
-  const [medicines, setMedicines] = useState([]);
-  const [batches, setBatches] = useState([]);
-  const [sales, setSales] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [batches, setBatches]   = useState([]);
+  const [sales, setSales]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      apiFetch("/stock/ledger"),
-      apiFetch("/stock/expiry-alerts"),
-      apiFetch("/stock/low-stock"),
-      apiFetch("/medicines"),
+    Promise.allSettled([
+      apiFetch("/inventory/expiry-alerts"),
+      apiFetch("/inventory/low-stock"),
       apiFetch("/batches"),
       apiFetch("/sales"),
-    ])
-      .then(([l, e, ls, m, b, s]) => {
-        setLedger(l);
-        setExpiry(e);
-        setLowStock(ls);
-        setMedicines(m);
-        setBatches(b);
-        setSales(s);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    ]).then(([e, ls, b, s]) => {
+      if (e.status  === "fulfilled") setExpiry(e.value);
+      if (ls.status === "fulfilled") setLowStock(ls.value);
+      if (b.status  === "fulfilled") setBatches(b.value);
+      if (s.status  === "fulfilled") setSales(s.value);
+      setLoading(false);
+    });
   }, []);
 
   if (loading) return <div className="loading">Loading dashboard…</div>;
-  if (error)
-    return (
-      <div className="error-box">
-        ⚠ {error} — Is your backend running on port 3000?
-      </div>
-    );
-
-  const recentLedger = [...ledger].slice(0, 6);
 
   return (
     <div>
@@ -61,18 +42,24 @@ function Dashboard() {
           <h1>Dashboard</h1>
           <p>{new Date().toLocaleDateString("en-NP", { dateStyle: "long" })}</p>
         </div>
+        <div className="page-header-actions">
+          <button className="btn btn-primary btn-sm" onClick={() => navigate("/batches/new")}>+ New Batch</button>
+          <button className="btn btn-success btn-sm" onClick={() => navigate("/sales/new")}>+ New Sale</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => navigate("/stock")}>View Stock</button>
+        </div>
       </div>
 
+      {/* Stats */}
       <div className="stats-grid">
         <div className="stat-card teal">
-          <div className="stat-icon teal">💊</div>
-          <div className="stat-value">{medicines.length}</div>
-          <div className="stat-label">Total Medicines</div>
-        </div>
-        <div className="stat-card blue">
-          <div className="stat-icon blue">📦</div>
+          <div className="stat-icon teal">📦</div>
           <div className="stat-value">{batches.length}</div>
           <div className="stat-label">Total Batches</div>
+        </div>
+        <div className="stat-card blue">
+          <div className="stat-icon blue">🧾</div>
+          <div className="stat-value">{sales.length}</div>
+          <div className="stat-label">Total Sales</div>
         </div>
         <div className="stat-card orange">
           <div className="stat-icon orange">📉</div>
@@ -86,140 +73,133 @@ function Dashboard() {
         </div>
       </div>
 
-      <div className="two-col">
-        <div className="card">
-          <div className="section-title">Recent Stock Ledger Entries</div>
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Medicine</th>
-                  <th>Type</th>
-                  <th>Change</th>
-                  <th>Balance</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentLedger.map((row, i) => (
-                  <tr key={i}>
-                    <td>{row.ledger_id}</td>
-                    <td>{row.medicine_name}</td>
-                    <td>
-                      <span
-                        className={`badge ${txBadge(row.transaction_type || row.txn_type)}`}
-                      >
-                        {(row.transaction_type || row.txn_type || "").replace(
-                          /_/g,
-                          " ",
-                        )}
-                      </span>
-                    </td>
-                    <td
-                      style={{
-                        color:
-                          (row.quantity_change || row.qty_change) > 0
-                            ? "green"
-                            : "red",
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {(row.quantity_change || row.qty_change) > 0 ? "+" : ""}
-                      {row.quantity_change ?? row.qty_change}
-                    </td>
-                    <td>{row.balance_after}</td>
-                    <td>{row.transacted_at || row.created_at}</td>
-                  </tr>
-                ))}
-                {recentLedger.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      style={{
-                        textAlign: "center",
-                        color: "#888",
-                        padding: 16,
-                      }}
-                    >
-                      No entries yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
+      <div className="two-col-wide">
+        {/* Left col */}
         <div>
+          {/* Expiry Alerts */}
           <div className="card">
-            <div className="section-title">Expiry Alerts</div>
+            <div className="section-title">
+              Expiry Alerts
+              {expiry.length > 0 && (
+                <span className="badge badge-red">{expiry.length} items</span>
+              )}
+            </div>
             {expiry.length === 0 ? (
-              <div className="alert alert-success">
-                No expiry alerts. All stock is within safe dates.
-              </div>
+              <div className="alert alert-success">✓ No expiry alerts. All stock is within safe dates.</div>
             ) : (
-              expiry.slice(0, 4).map((item, i) => {
-                const days = Math.ceil(
-                  (new Date(item.expiry_date) - new Date()) / 86400000,
-                );
-                return (
-                  <div
-                    key={i}
-                    className="alert alert-warning"
-                    style={{ marginBottom: 8 }}
-                  >
-                    <strong>{item.medicine_name}</strong> ({item.batch_no}) —
-                    expires in <strong>{days} days</strong>
-                  </div>
-                );
-              })
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Medicine</th>
+                      <th>Batch</th>
+                      <th>Supplier</th>
+                      <th>Expiry</th>
+                      <th>Stock</th>
+                      <th>Alert</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expiry.slice(0, 8).map((item, i) => (
+                      <tr key={i}>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{item.medicine_name}</div>
+                          <div className="td-muted">{item.brand_name}</div>
+                        </td>
+                        <td className="td-primary">{item.batch_no}</td>
+                        <td className="td-muted">{item.supplier_name}</td>
+                        <td>{new Date(item.expiry_date).toLocaleDateString()}</td>
+                        <td><strong>{item.current_stock}</strong></td>
+                        <td>
+                          <span className={`badge ${alertColor[item.alert_level] || "badge-gray"}`}>
+                            {item.alert_level}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
+          {/* Recent Batches */}
           <div className="card">
-            <div className="section-title">Low Stock Alerts</div>
-            {lowStock.length === 0 ? (
-              <div className="alert alert-success">
-                All stock levels are fine.
-              </div>
+            <div className="section-title">
+              Recent Batches
+              <button className="btn btn-secondary btn-xs" onClick={() => navigate("/batches")}>View All</button>
+            </div>
+            {batches.length === 0 ? (
+              <div className="empty-state"><p>No batches yet.</p></div>
             ) : (
-              lowStock.slice(0, 4).map((item, i) => (
-                <div
-                  key={i}
-                  className="alert alert-danger"
-                  style={{ marginBottom: 8 }}
-                >
-                  <strong>{item.medicine_name}</strong> — stock:{" "}
-                  <strong>{item.current_qty ?? item.current_stock}</strong>,
-                  reorder: {item.reorder_level}
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr><th>Batch No</th><th>Supplier</th><th>Date</th><th>Invoice Amt</th></tr>
+                  </thead>
+                  <tbody>
+                    {batches.slice(0, 5).map(b => (
+                      <tr key={b.batch_id}>
+                        <td className="td-primary">{b.batch_no}</td>
+                        <td>{b.supplier_name}</td>
+                        <td className="td-muted">{new Date(b.received_date).toLocaleDateString()}</td>
+                        <td>Rs. {parseFloat(b.invoice_amount || 0).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right col */}
+        <div>
+          {/* Low Stock */}
+          <div className="card">
+            <div className="section-title">
+              Low Stock
+              {lowStock.length > 0 && (
+                <span className="badge badge-orange">{lowStock.length} medicines</span>
+              )}
+            </div>
+            {lowStock.length === 0 ? (
+              <div className="alert alert-success">✓ All stock levels are fine.</div>
+            ) : (
+              lowStock.slice(0, 6).map((item, i) => (
+                <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{item.medicine_name}</div>
+                    <div className="td-muted">{item.brand_name} · {item.category}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span className={`badge ${stockColor[item.stock_alert] || "badge-gray"}`}>{item.stock_alert}</span>
+                    <div className="td-muted" style={{ marginTop: 3 }}>Stock: {item.total_stock} / Reorder: {item.reorder_level}</div>
+                  </div>
                 </div>
               ))
             )}
           </div>
 
+          {/* Recent Sales */}
           <div className="card">
-            <div className="section-title">Recent Sales</div>
+            <div className="section-title">
+              Recent Sales
+              <button className="btn btn-secondary btn-xs" onClick={() => navigate("/sales")}>View All</button>
+            </div>
             {sales.length === 0 ? (
-              <p style={{ fontSize: 13, color: "#888" }}>
-                No sales recorded yet.
-              </p>
+              <div className="empty-state"><p>No sales recorded yet.</p></div>
             ) : (
-              sales.slice(0, 4).map((s) => (
-                <div
-                  key={s.sale_id}
-                  style={{
-                    fontSize: 13,
-                    padding: "6px 0",
-                    borderBottom: "1px solid #eee",
-                  }}
-                >
-                  <strong>{s.customer_name}</strong> — Rs.
-                  {parseFloat(s.total_amount || 0).toFixed(2)} via{" "}
-                  {s.payment_mode}
-                  <span style={{ float: "right", color: "#888" }}>
-                    {s.sale_date}
-                  </span>
+              sales.slice(0, 5).map(s => (
+                <div key={s.sale_id} style={{ padding: "8px 0", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{s.customer_name}</div>
+                    <div className="td-muted">{s.payment_mode} · {s.served_by_full_name}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontWeight: 700, color: "var(--teal)" }}>Rs. {parseFloat(s.total_amount).toFixed(2)}</div>
+                    <div className="td-muted">{new Date(s.sale_date).toLocaleDateString()}</div>
+                  </div>
                 </div>
               ))
             )}
@@ -229,5 +209,3 @@ function Dashboard() {
     </div>
   );
 }
-
-export default Dashboard;
