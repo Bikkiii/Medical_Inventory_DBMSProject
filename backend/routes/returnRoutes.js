@@ -9,22 +9,24 @@ const {
   filterReturns,
 } = require("../controllers/returnController");
 
+const { authenticate } = require("../middleware/authMiddleware");
+
 // POST /api/returns/customer
 // Body: { sale_item_id, quantity_returned, reason, resolution, processed_by }
-router.post("/customer", processCustomerReturn);
+router.post("/customer", authenticate, processCustomerReturn);
 
 // POST /api/returns/damage
 // Body: { batch_item_id, quantity_damaged, damage_cause, resolution, processed_by }
-router.post("/damage", reportDamage);
+router.post("/damage", authenticate, reportDamage);
 
 // GET /api/returns/filter?return_type=&resolution=&startDate=&endDate=
 // NOTE: must be before /:id
-router.get("/filter", filterReturns);
+router.get("/filter", authenticate, filterReturns);
 
 // GET /api/returns
-router.get("/", getAllReturns);
+router.get("/", authenticate, getAllReturns);
 
 // GET /api/returns/:id
-router.get("/:id", getReturnById);
+router.get("/:id", authenticate, getReturnById);
 
 module.exports = router;

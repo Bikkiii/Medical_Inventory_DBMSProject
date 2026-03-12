@@ -34,7 +34,19 @@ CREATE TABLE supplier (
 );
 
 -- ============================================================
--- TABLE 3: medicine
+-- TABLE 3: category
+-- Simple lookup table for medicine categories
+-- ============================================================
+CREATE TABLE category (
+    category_id INT          NOT NULL AUTO_INCREMENT,
+    name        VARCHAR(50)  NOT NULL UNIQUE,
+    description VARCHAR(255) NULL,
+    is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (category_id)
+);
+
+-- ============================================================
+-- TABLE 4: medicine
 -- FIX: Added is_active for soft delete
 -- Never hard delete a medicine — deactivate instead
 -- Discontinued medicines remain in historical sale/return records
@@ -44,16 +56,17 @@ CREATE TABLE medicine (
     medicine_id   INT          NOT NULL AUTO_INCREMENT,
     medicine_name VARCHAR(150) NOT NULL,
     brand_name    VARCHAR(150) NULL,
-    category      ENUM('antibiotic','analgesic','antiviral',
-                       'vitamin','vaccine','topical','other') NOT NULL,
+    category_id   INT          NOT NULL,
     strength      VARCHAR(50)  NULL,
     reorder_level INT          NOT NULL DEFAULT 0,              -- threshold for low stock alert
     is_active     BOOLEAN      NOT NULL DEFAULT TRUE,           -- FIX: soft delete flag
-    PRIMARY KEY (medicine_id)
+    PRIMARY KEY (medicine_id),
+    CONSTRAINT fk_medicine_category
+        FOREIGN KEY (category_id) REFERENCES category(category_id)
 );
 
 -- ============================================================
--- TABLE 4: batch
+-- TABLE 5: batch
 -- No ordering concept — batch is entered when medicines arrive
 -- ============================================================
 CREATE TABLE batch (
@@ -73,7 +86,7 @@ CREATE TABLE batch (
 );
 
 -- ============================================================
--- TABLE 5: batch_item
+-- TABLE 6: batch_item
 -- Each medicine in a batch
 -- ============================================================
 CREATE TABLE batch_item (
@@ -96,7 +109,7 @@ CREATE TABLE batch_item (
 );
 
 -- ============================================================
--- TABLE 6: stock_ledger
+-- TABLE 7: stock_ledger
 -- Full audit trail of every stock movement
 -- reference_id points to: batch(batch_id) for purchase,
 --                          sale(sale_id) for sale,
@@ -125,7 +138,7 @@ CREATE TABLE stock_ledger (
 );
 
 -- ============================================================
--- TABLE 7: sale
+-- TABLE 8: sale
 -- ============================================================
 CREATE TABLE sale (
     sale_id        INT           NOT NULL AUTO_INCREMENT,
@@ -143,7 +156,7 @@ CREATE TABLE sale (
 );
 
 -- ============================================================
--- TABLE 8: sale_item
+-- TABLE 9: sale_item
 -- Each medicine line in a sale
 -- ============================================================
 CREATE TABLE sale_item (
@@ -167,7 +180,7 @@ CREATE TABLE sale_item (
 );
 
 -- ============================================================
--- TABLE 9: return
+-- TABLE 10: return
 -- Unified table for customer returns and damage reports
 -- sale_item_id is NULL for damage_report type
 -- damage_cause is NULL for customer_return type

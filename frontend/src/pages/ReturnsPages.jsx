@@ -16,6 +16,42 @@ const resolutionBadge = {
   pending:            "badge-gray",
 };
 
+const INT_INPUT = /^\d*$/;
+const sanitizeIntInput = (val) => (val === "" || INT_INPUT.test(val) ? val : null);
+
+const groupStockRows = (rows) => {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = `${row.medicine_id}:${row.batch_no}:${row.expiry_date}:${row.unit_price}`;
+    const existing = grouped.get(key);
+    const batchItem = {
+      batch_item_id: row.batch_item_id,
+      current_stock: row.current_stock,
+      expiry_date: row.expiry_date,
+    };
+    if (!existing) {
+      grouped.set(key, {
+        ...row,
+        group_key: key,
+        batch_item_ids: [row.batch_item_id],
+        batch_items: [batchItem],
+        current_stock: row.current_stock,
+      });
+      return;
+    }
+    existing.batch_item_ids.push(row.batch_item_id);
+    existing.batch_items.push(batchItem);
+    existing.current_stock += row.current_stock;
+  });
+
+  return Array.from(grouped.values()).map((row) => ({
+    ...row,
+    batch_items: row.batch_items.sort(
+      (a, b) => new Date(a.expiry_date) - new Date(b.expiry_date) || a.batch_item_id - b.batch_item_id,
+    ),
+  }));
+};
+
 // ──────────────────────────────────────────
 //  Returns List Page
 // ──────────────────────────────────────────
@@ -134,8 +170,9 @@ export function CustomerReturnPage() {
     if (!selectedItem) { showToast("Select an item to return", "error"); return; }
     if (!form.reason)   { showToast("Reason is required", "error"); return; }
     if (form.quantity_returned <= 0) { showToast("Quantity must be > 0", "error"); return; }
-    if (form.quantity_returned > selectedItem.quantity_sold) {
-      showToast(`Cannot exceed quantity sold (${selectedItem.quantity_sold})`, "error"); return;
+    const maxReturnable = selectedItem.returnable_qty ?? selectedItem.quantity_sold;
+    if (form.quantity_returned > maxReturnable) {
+      showToast(`Cannot exceed remaining quantity (${maxReturnable})`, "error"); return;
     }
 
     setSubmitting(true);
@@ -180,7 +217,11 @@ export function CustomerReturnPage() {
             style={{ flex: 1, padding: "8px 12px", border: "1px solid var(--border-dark)", borderRadius: "var(--radius-sm)", fontFamily: "DM Sans, sans-serif", fontSize: 13 }}
             placeholder="Enter Sale ID (e.g. 12)"
             value={saleId}
-            onChange={e => setSaleId(e.target.value)}
+            onChange={e => {
+              const next = sanitizeIntInput(e.target.value);
+              if (next === null) return;
+              setSaleId(next);
+            }}
             onKeyDown={e => e.key === "Enter" && searchSale()}
             type="number"
           />
@@ -211,46 +252,68 @@ export function CustomerReturnPage() {
 
           <div className="table-wrapper">
             <table>
-              <thead><tr><th></th><th>Medicine</th><th>Batch</th><th>Qty Sold</th><th>Unit Price</th></tr></thead>
+              <thead><tr><th></th><th>Medicine</th><th>Batch</th><th>Qty Remaining</th><th>Unit Price</th></tr></thead>
               <tbody>
                 {(() => {
                   const groups = new Map();
-                  (saleData.items || []).forEach((it) => {
-                    const key = `${it.batch_item_id}:${it.medicine_id}:${it.unit_price}:${it.discount_pct || 0}`;
-                    const existing = groups.get(key);
-                    if (!existing) {
-                      groups.set(key, {
-                        key,
-                        sale_item_ids: [it.sale_item_id],
-                        sale_item_id: it.sale_item_id, // fallback
-                        batch_item_id: it.batch_item_id,
-                        medicine_id: it.medicine_id,
-                        medicine_name: it.medicine_name,
-                        brand_name: it.brand_name,
-                        batch_no: it.batch_no,
-                        quantity_sold: Number(it.quantity_sold) || 0,
-                        unit_price: it.unit_price,
-                        discount_pct: it.discount_pct || 0,
-                      });
-                      return;
-                    }
-                    existing.sale_item_ids.push(it.sale_item_id);
-                    existing.quantity_sold += Number(it.quantity_sold) || 0;
-                  });
-                  return Array.from(groups.values());
-                })().map(it => (
-                  <tr key={it.key}
-                    style={{ cursor: "pointer", background: selectedItem?.key === it.key ? "var(--teal-light)" : "" }}
-                    onClick={() => { setSelectedItem(it); setForm(f => ({ ...f, quantity_returned: 1 })); }}>
-                    <td>
-                      <input type="radio" readOnly checked={selectedItem?.key === it.key} />
-                    </td>
-                    <td><div style={{ fontWeight: 600 }}>{it.medicine_name}</div><div className="td-muted">{it.brand_name}</div></td>
-                    <td className="td-primary">{it.batch_no}</td>
-                    <td>{it.quantity_sold}</td>
-                    <td>Rs. {parseFloat(it.unit_price).toFixed(2)}</td>
-                  </tr>
-                ))}
+                    (saleData.items || []).forEach((it) => {
+                      const key = `${it.batch_item_id}:${it.medicine_id}:${it.unit_price}:${it.discount_pct || 0}`;
+                      const soldQty = Number(it.quantity_sold) || 0;
+                      const returnedQty = Number(it.returned_qty) || 0;
+                      const existing = groups.get(key);
+                      if (!existing) {
+                        groups.set(key, {
+                          key,
+                          sale_item_ids: [it.sale_item_id],
+                          sale_item_id: it.sale_item_id, // fallback
+                          batch_item_id: it.batch_item_id,
+                          medicine_id: it.medicine_id,
+                          medicine_name: it.medicine_name,
+                          brand_name: it.brand_name,
+                          batch_no: it.batch_no,
+                          quantity_sold: soldQty,
+                          returned_qty: returnedQty,
+                          unit_price: it.unit_price,
+                          discount_pct: it.discount_pct || 0,
+                        });
+                        return;
+                      }
+                      existing.sale_item_ids.push(it.sale_item_id);
+                      existing.quantity_sold += soldQty;
+                      existing.returned_qty += returnedQty;
+                    });
+                    return Array.from(groups.values()).map((g) => ({
+                      ...g,
+                      returnable_qty: Math.max((g.quantity_sold || 0) - (g.returned_qty || 0), 0),
+                    }));
+                })().map(it => {
+                  const isSelectable = it.returnable_qty > 0;
+                  return (
+                    <tr key={it.key}
+                      style={{
+                        cursor: isSelectable ? "pointer" : "not-allowed",
+                        opacity: isSelectable ? 1 : 0.5,
+                        background: selectedItem?.key === it.key ? "var(--teal-light)" : "",
+                      }}
+                      onClick={() => {
+                        if (!isSelectable) return;
+                        setSelectedItem(it);
+                        setForm(f => ({ ...f, quantity_returned: Math.min(1, it.returnable_qty || 1) }));
+                      }}>
+                      <td>
+                        <input type="radio" readOnly checked={selectedItem?.key === it.key} disabled={!isSelectable} />
+                      </td>
+                      <td><div style={{ fontWeight: 600 }}>{it.medicine_name}</div><div className="td-muted">{it.brand_name}</div></td>
+                      <td className="td-primary">{it.batch_no}</td>
+                      <td>
+                        {it.returnable_qty}
+                        <div className="td-muted">Sold: {it.quantity_sold}</div>
+                        {it.returned_qty > 0 && <div className="td-muted">Returned: {it.returned_qty}</div>}
+                      </td>
+                      <td>Rs. {parseFloat(it.unit_price).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -263,10 +326,14 @@ export function CustomerReturnPage() {
           <div className="section-title">Step 3 — Return Details</div>
           <div className="form-grid">
             <div className="form-group">
-              <label>Quantity to Return (Max {selectedItem.quantity_sold})</label>
-              <input type="number" min={1} max={selectedItem.quantity_sold}
+              <label>Quantity to Return (Max {selectedItem.returnable_qty ?? selectedItem.quantity_sold})</label>
+              <input type="number" min={1} max={selectedItem.returnable_qty ?? selectedItem.quantity_sold}
                 value={form.quantity_returned}
-                onChange={e => setForm(f => ({ ...f, quantity_returned: e.target.value }))} />
+                onChange={e => {
+                  const next = sanitizeIntInput(e.target.value);
+                  if (next === null) return;
+                  setForm(f => ({ ...f, quantity_returned: next }));
+                }} />
             </div>
             <div className="form-group">
               <label>Resolution *</label>
@@ -308,8 +375,9 @@ export function DamageReportPage() {
   const [stock,      setStock]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
   const [form, setForm] = useState({
-    batch_item_id: "", quantity_damaged: "", damage_cause: "", resolution: "write_off"
+    group_key: "", batch_item_id: "", quantity_damaged: "", damage_cause: "", resolution: "write_off"
   });
   const [maxQty, setMaxQty] = useState(0);
   const [errors, setErrors] = useState({});
@@ -319,20 +387,21 @@ export function DamageReportPage() {
 
   useEffect(() => {
     apiFetch("/inventory/current-stock")
-      .then(data => setStock(data.filter(r => r.current_stock > 0)))
+      .then(data => setStock(groupStockRows(data.filter(r => r.current_stock > 0))))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
   function pickItem(val) {
-    const row = stock.find(r => String(r.batch_item_id) === String(val));
-    setForm(f => ({ ...f, batch_item_id: val }));
+    const row = stock.find(r => String(r.group_key) === String(val));
+    setSelectedGroup(row || null);
+    setForm(f => ({ ...f, group_key: val, batch_item_id: row?.batch_item_ids?.[0] || "" }));
     setMaxQty(row?.current_stock || 0);
   }
 
   function validate() {
     const e = {};
-    if (!form.batch_item_id)                         e.batch_item_id     = "Select a batch item";
+    if (!form.group_key)                             e.batch_item_id     = "Select a batch item";
     if (!form.quantity_damaged || form.quantity_damaged <= 0) e.quantity_damaged = "Must be > 0";
     if (form.quantity_damaged > maxQty)              e.quantity_damaged  = `Cannot exceed stock (${maxQty})`;
     if (!form.damage_cause)                          e.damage_cause      = "Damage cause is required";
@@ -344,15 +413,23 @@ export function DamageReportPage() {
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     setSubmitting(true);
     try {
-      await apiPost("/returns/damage", {
-        batch_item_id:    parseInt(form.batch_item_id),
+      const payload = {
         quantity_damaged: parseInt(form.quantity_damaged),
         damage_cause:     form.damage_cause,
         resolution:       form.resolution,
         processed_by:     user.user_id,
-      });
+      };
+
+      if (selectedGroup?.batch_item_ids?.length > 1) {
+        payload.batch_item_ids = selectedGroup.batch_item_ids;
+      } else {
+        payload.batch_item_id = parseInt(form.batch_item_id);
+      }
+
+      await apiPost("/returns/damage", payload);
       showToast("Damage report submitted. Stock updated.", "success");
-      setForm({ batch_item_id: "", quantity_damaged: "", damage_cause: "", resolution: "write_off" });
+      setForm({ group_key: "", batch_item_id: "", quantity_damaged: "", damage_cause: "", resolution: "write_off" });
+      setSelectedGroup(null);
       setMaxQty(0);
       setErrors({});
     } catch (err) {
@@ -376,12 +453,12 @@ export function DamageReportPage() {
         <div className="form-grid">
           <div className="form-group full-width">
             <label>Batch Item (Medicine + Batch) *</label>
-            <select value={form.batch_item_id} onChange={e => pickItem(e.target.value)}
+            <select value={form.group_key} onChange={e => pickItem(e.target.value)}
               className={errors.batch_item_id ? "error" : ""}>
               <option value="">Select medicine & batch…</option>
               {stock.map(r => (
-                <option key={r.batch_item_id} value={r.batch_item_id}>
-                  {r.medicine_name} | Batch: {r.batch_no} | Exp: {new Date(r.expiry_date).toLocaleDateString()} | Stock: {r.current_stock}
+                <option key={r.group_key} value={r.group_key}>
+                  {r.medicine_name} | Batch: {r.batch_no} | Exp: {new Date(r.expiry_date).toLocaleDateString()} | Stock: {r.current_stock}{r.batch_item_ids?.length > 1 ? " (merged)" : ""}
                 </option>
               ))}
             </select>
@@ -392,7 +469,11 @@ export function DamageReportPage() {
             <label>Quantity Damaged {maxQty > 0 && `(Max ${maxQty})`} *</label>
             <input type="number" min={1} max={maxQty}
               value={form.quantity_damaged}
-              onChange={e => setForm(f => ({ ...f, quantity_damaged: e.target.value }))}
+              onChange={e => {
+                const next = sanitizeIntInput(e.target.value);
+                if (next === null) return;
+                setForm(f => ({ ...f, quantity_damaged: next }));
+              }}
               className={errors.quantity_damaged ? "error" : ""} />
             {errors.quantity_damaged && <span className="form-error">{errors.quantity_damaged}</span>}
           </div>
@@ -429,7 +510,23 @@ export function DamageReportPage() {
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
-          <button className="btn btn-secondary" onClick={() => { setForm({ batch_item_id:"",quantity_damaged:"",damage_cause:"",resolution:"write_off" }); setErrors({}); }}>Reset</button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setForm({
+                group_key: "",
+                batch_item_id: "",
+                quantity_damaged: "",
+                damage_cause: "",
+                resolution: "write_off",
+              });
+              setSelectedGroup(null);
+              setMaxQty(0);
+              setErrors({});
+            }}
+          >
+            Reset
+          </button>
           <button className="btn btn-danger" onClick={handleSubmit} disabled={submitting}>
             {submitting ? "Submitting…" : "⚠ Submit Damage Report"}
           </button>

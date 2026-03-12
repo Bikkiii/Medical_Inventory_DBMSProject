@@ -16,7 +16,7 @@ SELECT
     m.medicine_id,
     m.medicine_name,
     m.brand_name,
-    m.category,
+    c.name                                              AS category,
     m.strength,
     m.is_active                                         AS medicine_active,  -- FIX: expose flag for frontend
     bi.batch_item_id,
@@ -50,11 +50,12 @@ SELECT
 
 FROM batch_item bi
 JOIN medicine      m  ON m.medicine_id    = bi.medicine_id
+JOIN category      c  ON c.category_id    = m.category_id
 JOIN batch         b  ON b.batch_id       = bi.batch_id
 JOIN supplier      s  ON s.supplier_id    = b.supplier_id
 LEFT JOIN stock_ledger sl ON sl.batch_item_id = bi.batch_item_id
 GROUP BY
-    m.medicine_name, m.brand_name, m.category, m.strength, m.is_active,
+    m.medicine_id, m.medicine_name, m.brand_name, c.name, m.strength, m.is_active,
     bi.batch_item_id, bi.expiry_date, bi.unit_price,
     b.batch_no, b.received_date, s.supplier_name, s.is_active, m.reorder_level;
 
@@ -90,6 +91,7 @@ SELECT
 
 FROM batch_item bi
 JOIN medicine      m  ON m.medicine_id    = bi.medicine_id
+JOIN category      c  ON c.category_id    = m.category_id
 JOIN batch         b  ON b.batch_id       = bi.batch_id
 JOIN supplier      s  ON s.supplier_id    = b.supplier_id
 LEFT JOIN stock_ledger sl ON sl.batch_item_id = bi.batch_item_id
@@ -120,7 +122,7 @@ CREATE OR REPLACE VIEW vw_low_stock AS
 SELECT
     m.medicine_name,
     m.brand_name,
-    m.category,
+    c.name                                                AS category,
     m.reorder_level,
     COALESCE(SUM(sl.quantity_change), 0)                              AS total_stock,
 
@@ -134,13 +136,14 @@ SELECT
     END AS stock_alert
 
 FROM medicine m
+JOIN category      c  ON c.category_id    = m.category_id
 JOIN batch_item    bi ON bi.medicine_id    = m.medicine_id
 LEFT JOIN stock_ledger sl ON sl.batch_item_id = bi.batch_item_id
 
 -- FIX: Only alert on active medicines — no reorder needed for discontinued ones
 WHERE m.is_active = TRUE
 
-GROUP BY m.medicine_id, m.medicine_name, m.brand_name, m.category, m.reorder_level
+GROUP BY m.medicine_id, m.medicine_name, m.brand_name, c.name, m.reorder_level
 
 -- Only include medicines at or below reorder threshold
 HAVING COALESCE(SUM(sl.quantity_change), 0) <= m.reorder_level
@@ -156,14 +159,15 @@ ORDER BY total_stock ASC;
 -- ============================================================
 CREATE OR REPLACE VIEW vw_active_medicines AS
 SELECT
-    medicine_id,
-    medicine_name,
-    brand_name,
-    category,
-    strength,
-    reorder_level
-FROM medicine
-WHERE is_active = TRUE;
+    m.medicine_id,
+    m.medicine_name,
+    m.brand_name,
+    c.name        AS category,
+    m.strength,
+    m.reorder_level
+FROM medicine m
+JOIN category c ON c.category_id = m.category_id
+WHERE m.is_active = TRUE;
 
 
 -- ============================================================

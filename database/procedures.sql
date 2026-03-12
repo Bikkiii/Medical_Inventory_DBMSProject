@@ -129,6 +129,10 @@ BEGIN
     DECLARE v_sale_id       INT;
     DECLARE v_refund_amount DECIMAL(10,2);
     DECLARE v_qty_sold      INT;
+    DECLARE v_already_returned INT DEFAULT 0;
+    DECLARE v_total_sold    INT DEFAULT 0;
+    DECLARE v_total_returned INT DEFAULT 0;
+    DECLARE v_total_requested INT DEFAULT 0;
     DECLARE v_error         TINYINT DEFAULT 0;
 
     DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SET v_error = 1;
@@ -138,6 +142,32 @@ BEGIN
     INTO   v_batch_item_id, v_medicine_id, v_unit_price, v_sale_id, v_qty_sold
     FROM   sale_item
     WHERE  sale_item_id = p_sale_item_id;
+
+    IF v_batch_item_id IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Return failed: sale item not found.';
+    END IF;
+
+    -- Prevent invalid/over-limit returns
+    IF p_quantity_returned <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Return failed: quantity_returned must be greater than 0.';
+    END IF;
+
+    IF p_resolution NOT IN ('refund', 'replacement', 'pending') THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Return failed: resolution must be refund, replacement, or pending.';
+    END IF;
+
+    SELECT COALESCE(SUM(quantity_returned), 0)
+    INTO   v_already_returned
+    FROM   `return`
+    WHERE  sale_item_id = p_sale_item_id;
+
+    IF p_quantity_returned > (v_qty_sold - v_already_returned) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Return failed: quantity exceeds remaining sold amount.';
+    END IF;
 
     -- Calculate refund only if resolution is 'refund'
     SET v_refund_amount = CASE
@@ -160,11 +190,28 @@ BEGIN
             v_refund_amount, p_processed_by
         );
 
-        -- Update sale_status based on how much was returned
-        -- fully_returned if all items returned, otherwise partially_returned
+        -- Update sale_status based on total returned across the sale
+        SELECT COALESCE(SUM(quantity_sold), 0)
+        INTO v_total_sold
+        FROM sale_item
+        WHERE sale_id = v_sale_id;
+
+        SELECT COALESCE(SUM(r.quantity_returned), 0)
+        INTO v_total_requested
+        FROM `return` r
+        JOIN sale_item si ON si.sale_item_id = r.sale_item_id
+        WHERE si.sale_id = v_sale_id;
+
+        SELECT COALESCE(SUM(r.quantity_returned), 0)
+        INTO v_total_returned
+        FROM `return` r
+        JOIN sale_item si ON si.sale_item_id = r.sale_item_id
+        WHERE si.sale_id = v_sale_id AND r.resolution != 'pending';
+
         UPDATE sale
         SET sale_status = CASE
-            WHEN v_qty_sold = p_quantity_returned THEN 'fully_returned'
+            WHEN v_total_requested <= 0 THEN 'completed'
+            WHEN v_total_returned >= v_total_sold THEN 'fully_returned'
             ELSE 'partially_returned'
         END
         WHERE sale_id = v_sale_id;

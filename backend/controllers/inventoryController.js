@@ -3,12 +3,7 @@ const pool = require("../config/db");
 // ============================================================
 // GET /api/inventory/current-stock
 // Queries vw_current_stock
-// Only shows received batches (WHERE b.batch_status = 'received')
 // Returns per-batch_item stock with expiry_status + stock_status
-//
-// New fields vs old schema:
-//   medicine: generic_name, form, unit added
-//   batch: batch_id included
 // ============================================================
 const getAllStocks = async (req, res) => {
   try {
@@ -56,8 +51,7 @@ const getExpiryAlerts = async (req, res) => {
 // Aggregates stock across ALL batches per medicine
 // Only shows medicines at or below reorder_level
 //
-// New fields vs old schema:
-//   medicine: generic_name, form, unit added
+// Fields include category, reorder_level, total_stock, shortage_quantity, stock_alert
 //
 // stock_alert values: 'OUT OF STOCK' | 'LOW STOCK'
 // ============================================================
@@ -76,4 +70,45 @@ const getLowStock = async (req, res) => {
   }
 };
 
-module.exports = { getAllStocks, getExpiryAlerts, getLowStock };
+// ============================================================
+// GET /api/inventory/ledger
+// Full stock ledger with medicine, batch and user info
+// ============================================================
+const getLedger = async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        sl.ledger_id,
+        sl.medicine_id,
+        m.medicine_name,
+        m.brand_name,
+        m.strength,
+        sl.batch_item_id,
+        b.batch_no,
+        sl.transaction_type,
+        sl.quantity_change,
+        sl.balance_after,
+        sl.reference_id,
+        sl.transacted_by,
+        u.full_name AS transacted_by_name,
+        sl.transacted_at
+      FROM stock_ledger sl
+      JOIN medicine   m  ON m.medicine_id    = sl.medicine_id
+      JOIN batch_item bi ON bi.batch_item_id = sl.batch_item_id
+      JOIN batch      b  ON b.batch_id       = bi.batch_id
+      JOIN user       u  ON u.user_id        = sl.transacted_by
+      ORDER BY sl.transacted_at DESC, sl.ledger_id DESC
+    `);
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: "No ledger entries found" });
+    }
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("Database Error:", err.message);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+module.exports = { getAllStocks, getExpiryAlerts, getLowStock, getLedger };

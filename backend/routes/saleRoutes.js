@@ -8,18 +8,20 @@ const {
   filterSales,
 } = require("../controllers/saleController");
 
+const { authenticate } = require("../middleware/authMiddleware");
+
 // POST /api/sales
 // Body: { customer_name, customer_phone?, served_by, payment_mode, items[] }
-router.post("/", processSale);
+router.post("/", authenticate, processSale);
 
 // GET /api/sales/filter?startDate=&endDate=&customer=&payment_mode=&sale_status=
 // NOTE: must be before /:id
-router.get("/filter", filterSales);
+router.get("/filter", authenticate, filterSales);
 
 // GET /api/sales
-router.get("/", getAllSales);
+router.get("/", authenticate, getAllSales);
 
 // GET /api/sales/:id
-router.get("/:id", getSaleById);
+router.get("/:id", authenticate, getSaleById);
 
 module.exports = router;

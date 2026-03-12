@@ -14,6 +14,7 @@ import LedgerPage from "./pages/LedgerPage";
 import MedicinesPage from "./pages/MedicinesPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import UsersPage from "./pages/UsersPage";
+import CategoriesPage from "./pages/CategoriesPage";
 
 import "./index.css";
 
@@ -65,6 +66,7 @@ function AppRoutes() {
       <Route path="/ledger" element={<ProtectedRoute><LedgerPage /></ProtectedRoute>} />
 
       <Route path="/medicines" element={<AdminRoute><MedicinesPage /></AdminRoute>} />
+      <Route path="/categories" element={<AdminRoute><CategoriesPage /></AdminRoute>} />
       <Route path="/suppliers" element={<AdminRoute><SuppliersPage /></AdminRoute>} />
       <Route path="/users"     element={<AdminRoute><UsersPage /></AdminRoute>} />
 

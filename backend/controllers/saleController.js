@@ -1,5 +1,10 @@
 const pool = require("../config/db");
 
+const INT_PATTERN = /^\d+$/;
+const DECIMAL_PATTERN = /^\d+(\.\d{1,2})?$/;
+const isIntLike = (value) => INT_PATTERN.test(String(value ?? ""));
+const isDecimalLike = (value) => DECIMAL_PATTERN.test(String(value ?? ""));
+
 // ============================================================
 // POST /api/sales
 // Process a new sale with one or multiple items.
@@ -65,17 +70,43 @@ const processSale = async (req, res) => {
   // - Reject duplicates if unit_price/discount_pct differs for same batch_item_id
   const merged = new Map(); // batch_item_id -> { batch_item_id, quantity_sold, unit_price, discount_pct, medicine_id? }
   for (const item of rawItems) {
-    const batch_item_id = Number.parseInt(item?.batch_item_id, 10);
-    const quantity_sold = Number.parseInt(item?.quantity_sold, 10);
-    const unit_price = Number.parseFloat(item?.unit_price);
-    const discount_pct =
-      item?.discount_pct === undefined || item?.discount_pct === null
-        ? 0
-        : Number.parseFloat(item.discount_pct);
+    const rawBatchItemId = item?.batch_item_id;
+    const rawQuantity = item?.quantity_sold;
+    const rawUnitPrice = item?.unit_price;
+    const rawDiscount = item?.discount_pct;
+
+    const hasDiscount = rawDiscount !== undefined && rawDiscount !== null && rawDiscount !== "";
+    if (
+      !isIntLike(rawBatchItemId) ||
+      !isIntLike(rawQuantity) ||
+      !isDecimalLike(rawUnitPrice) ||
+      (hasDiscount && !isDecimalLike(rawDiscount))
+    ) {
+      return res.status(400).json({
+        error: "Invalid number format for batch_item_id, quantity_sold, unit_price, or discount_pct",
+      });
+    }
+
+    const batch_item_id = Number.parseInt(rawBatchItemId, 10);
+    const quantity_sold = Number.parseInt(rawQuantity, 10);
+    const unit_price = Number.parseFloat(rawUnitPrice);
+    const discount_pct = hasDiscount ? Number.parseFloat(rawDiscount) : 0;
 
     if (!batch_item_id || !quantity_sold || !unit_price) {
       return res.status(400).json({
         error: "Each item requires: batch_item_id, quantity_sold, unit_price",
+      });
+    }
+
+    if (quantity_sold <= 0 || unit_price <= 0) {
+      return res.status(400).json({
+        error: "quantity_sold and unit_price must be greater than 0",
+      });
+    }
+
+    if (discount_pct < 0 || discount_pct > 100) {
+      return res.status(400).json({
+        error: "discount_pct must be between 0 and 100",
       });
     }
 
@@ -277,17 +308,24 @@ const getSaleById = async (req, res) => {
         si.medicine_id,
         m.medicine_name,
         m.brand_name,
-        m.category,
+        c.name          AS category,
         m.strength,
         b.batch_no,
         si.quantity_sold,
         si.unit_price,
         si.discount_pct,
-        si.subtotal
+        si.subtotal,
+        COALESCE(rsum.returned_qty, 0) AS returned_qty
       FROM sale s
       JOIN user       u   ON u.user_id         = s.served_by
       JOIN sale_item  si  ON si.sale_id         = s.sale_id
       JOIN medicine   m   ON m.medicine_id      = si.medicine_id
+      JOIN category   c   ON c.category_id      = m.category_id
+      LEFT JOIN (
+        SELECT sale_item_id, COALESCE(SUM(quantity_returned), 0) AS returned_qty
+        FROM \`return\`
+        GROUP BY sale_item_id
+      ) rsum ON rsum.sale_item_id = si.sale_item_id
       JOIN batch_item bi  ON bi.batch_item_id   = si.batch_item_id
       JOIN batch      b   ON b.batch_id         = bi.batch_id
       WHERE s.sale_id = ?`,
@@ -320,14 +358,19 @@ const getSaleById = async (req, res) => {
               brand_name: row.brand_name,
               category: row.category,
               strength: row.strength,
-              batch_no: row.batch_no,
-              quantity_sold: row.quantity_sold,
-              unit_price: row.unit_price,
-              discount_pct: row.discount_pct,
-              subtotal: row.subtotal,
-            },
-          ]),
-        ).values(),
+                batch_no: row.batch_no,
+                quantity_sold: row.quantity_sold,
+                unit_price: row.unit_price,
+                discount_pct: row.discount_pct,
+                subtotal: row.subtotal,
+                returned_qty: Number(row.returned_qty) || 0,
+                returnable_qty: Math.max(
+                  (Number(row.quantity_sold) || 0) - (Number(row.returned_qty) || 0),
+                  0,
+                ),
+              },
+            ]),
+          ).values(),
       ),
     };
 

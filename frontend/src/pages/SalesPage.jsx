@@ -149,10 +149,57 @@ function SaleDetailModal({ sale, onClose }) {
 // ──────────────────────────────────────────
 //  New Sale Page
 // ──────────────────────────────────────────
+const groupStockRows = (rows) => {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = `${row.medicine_id}:${row.batch_no}:${row.expiry_date}:${row.unit_price}`;
+    const existing = grouped.get(key);
+    const batchItem = {
+      batch_item_id: row.batch_item_id,
+      current_stock: row.current_stock,
+      expiry_date: row.expiry_date,
+    };
+    if (!existing) {
+      grouped.set(key, {
+        ...row,
+        group_key: key,
+        batch_item_ids: [row.batch_item_id],
+        batch_items: [batchItem],
+        current_stock: row.current_stock,
+      });
+      return;
+    }
+    existing.batch_item_ids.push(row.batch_item_id);
+    existing.batch_items.push(batchItem);
+    existing.current_stock += row.current_stock;
+  });
+
+  return Array.from(grouped.values()).map((row) => ({
+    ...row,
+    batch_items: row.batch_items.sort(
+      (a, b) => new Date(a.expiry_date) - new Date(b.expiry_date) || a.batch_item_id - b.batch_item_id,
+    ),
+  }));
+};
+
 const EMPTY_SALE_ITEM = () => ({
-  batch_item_id: "", medicine_id: "", quantity_sold: 1,
-  unit_price: "", discount_pct: 0, _maxQty: 0, _label: ""
+  group_key: "",
+  batch_item_id: "",
+  batch_item_ids: [],
+  medicine_id: "",
+  quantity_sold: 1,
+  unit_price: "",
+  discount_pct: 0,
+  _maxQty: 0,
+  _label: "",
+  _batchItems: [],
 });
+
+const INT_INPUT = /^\d*$/;
+const DECIMAL_INPUT = /^\d*(\.\d{0,2})?$/;
+const sanitizeIntInput = (val) => (val === "" || INT_INPUT.test(val) ? val : null);
+const sanitizeDecimalInput = (val) => (val === "" || DECIMAL_INPUT.test(val) ? val : null);
+const sanitizePhoneInput = (val) => (val === "" || INT_INPUT.test(val) ? val : null);
 
 export function NewSalePage() {
   const [stock,   setStock]   = useState([]);
@@ -176,7 +223,7 @@ export function NewSalePage() {
           r.expiry_status !== "expired" &&
           r.medicine_active !== false
         );
-        setStock(avail);
+        setStock(groupStockRows(avail));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -185,16 +232,19 @@ export function NewSalePage() {
   function updateCustomer(k, v) { setCustomer(c => ({ ...c, [k]: v })); }
 
   function pickStock(idx, val) {
-    const row = stock.find(r => String(r.batch_item_id) === String(val));
+    const row = stock.find(r => String(r.group_key) === String(val));
     if (!row) return;
     setItems(items => items.map((it, i) =>
       i === idx ? {
         ...it,
-        batch_item_id: row.batch_item_id,
+        group_key:     row.group_key,
+        batch_item_id: row.batch_item_ids?.[0] || row.batch_item_id,
+        batch_item_ids: row.batch_item_ids || [row.batch_item_id],
+        _batchItems:   row.batch_items || [],
         medicine_id:   row.medicine_id || it.medicine_id,
         unit_price:    row.unit_price,
         _maxQty:       row.current_stock,
-        _label:        `${row.medicine_name} | Batch: ${row.batch_no} | Exp: ${new Date(row.expiry_date).toLocaleDateString()} | Stock: ${row.current_stock}`,
+        _label:        `${row.medicine_name} | Batch: ${row.batch_no} | Exp: ${new Date(row.expiry_date).toLocaleDateString()} | Stock: ${row.current_stock}${row.batch_item_ids?.length > 1 ? " (merged)" : ""}`,
       } : it
     ));
   }
@@ -222,14 +272,16 @@ export function NewSalePage() {
 
     const counts = {};
     items.forEach(it => {
-      if (!it.batch_item_id) return;
-      counts[it.batch_item_id] = (counts[it.batch_item_id] || 0) + 1;
+      const key = it.group_key || it.batch_item_id;
+      if (!key) return;
+      counts[key] = (counts[key] || 0) + 1;
     });
 
     const itemErrs = items.map(it => {
       const e = {};
+      const key = it.group_key || it.batch_item_id;
       if (!it.batch_item_id) e.batch_item_id = "Select a medicine";
-      if (it.batch_item_id && counts[it.batch_item_id] > 1) e.batch_item_id = "Duplicate batch selected";
+      if (key && counts[key] > 1) e.batch_item_id = "Duplicate batch selected";
       if (!it.quantity_sold || it.quantity_sold <= 0) e.quantity_sold = "Must be > 0";
       if (it._maxQty && it.quantity_sold > it._maxQty) e.quantity_sold = `Max available: ${it._maxQty}`;
       if (!it.unit_price || it.unit_price <= 0) e.unit_price = "Must be > 0";
@@ -245,20 +297,53 @@ export function NewSalePage() {
     setSubmitting(true);
     try {
       const stockMap = {};
-      stock.forEach(r => { stockMap[r.batch_item_id] = r.medicine_id; });
+      stock.forEach(r => {
+        if (Array.isArray(r.batch_items) && r.batch_items.length > 0) {
+          r.batch_items.forEach(bi => { stockMap[bi.batch_item_id] = r.medicine_id; });
+          return;
+        }
+        if (r.batch_item_id) {
+          stockMap[r.batch_item_id] = r.medicine_id;
+        }
+      });
+
+      const expandedItems = [];
+      for (const it of items) {
+        const totalQty = parseInt(it.quantity_sold);
+        const batchItems = Array.isArray(it._batchItems) && it._batchItems.length > 0
+          ? it._batchItems
+          : (it.batch_item_id ? [{ batch_item_id: parseInt(it.batch_item_id), current_stock: it._maxQty || 0 }] : []);
+        let remaining = totalQty;
+
+        for (const bi of batchItems) {
+          if (remaining <= 0) break;
+          const available = Number(bi.current_stock) || 0;
+          const take = Math.min(remaining, available);
+          if (take <= 0) continue;
+
+          expandedItems.push({
+            batch_item_id: parseInt(bi.batch_item_id),
+            medicine_id: it.medicine_id ? parseInt(it.medicine_id) : stockMap[bi.batch_item_id] || null,
+            quantity_sold: take,
+            unit_price: parseFloat(it.unit_price),
+            discount_pct: parseFloat(it.discount_pct) || 0,
+          });
+          remaining -= take;
+        }
+
+        if (remaining > 0) {
+          showToast("Quantity exceeds available stock for selected batch", "error");
+          setSubmitting(false);
+          return;
+        }
+      }
 
       const body = {
         customer_name:  customer.name,
         customer_phone: customer.phone || null,
         served_by:      user.user_id,
         payment_mode:   customer.payment_mode,
-        items: items.map(it => ({
-          batch_item_id: parseInt(it.batch_item_id),
-          medicine_id:   stockMap[it.batch_item_id] ?? (it.medicine_id ? parseInt(it.medicine_id) : null),
-          quantity_sold: parseInt(it.quantity_sold),
-          unit_price:    parseFloat(it.unit_price),
-          discount_pct:  parseFloat(it.discount_pct) || 0,
-        })),
+        items: expandedItems,
       };
       const res = await apiPost("/sales", body);
       showToast(`Sale completed! Sale ID: ${res.saleId}`, "success");
@@ -291,7 +376,16 @@ export function NewSalePage() {
           </div>
           <div className="form-group">
             <label>Phone</label>
-            <input value={customer.phone} onChange={e => updateCustomer("phone", e.target.value)} placeholder="98XXXXXXXX" />
+            <input
+              value={customer.phone}
+              inputMode="numeric"
+              onChange={e => {
+                const next = sanitizePhoneInput(e.target.value);
+                if (next === null) return;
+                updateCustomer("phone", next);
+              }}
+              placeholder="98XXXXXXXX"
+            />
           </div>
           <div className="form-group">
             <label>Payment Mode *</label>
@@ -320,12 +414,12 @@ export function NewSalePage() {
               <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr 1fr 36px", gap: 10, alignItems: "end" }}>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Medicine & Batch</label>
-                  <select value={item.batch_item_id} onChange={e => pickStock(idx, e.target.value)}
+                  <select value={item.group_key || ""} onChange={e => pickStock(idx, e.target.value)}
                     className={ie.batch_item_id ? "error" : ""}>
                     <option value="">Select medicine + batch…</option>
                     {stock.map(r => (
-                      <option key={r.batch_item_id} value={r.batch_item_id}>
-                        {r.medicine_name} | Batch: {r.batch_no} | Exp: {new Date(r.expiry_date).toLocaleDateString()} | Stock: {r.current_stock}
+                      <option key={r.group_key} value={r.group_key}>
+                        {r.medicine_name} | Batch: {r.batch_no} | Exp: {new Date(r.expiry_date).toLocaleDateString()} | Stock: {r.current_stock}{r.batch_item_ids?.length > 1 ? " (merged)" : ""}
                       </option>
                     ))}
                   </select>
@@ -335,21 +429,33 @@ export function NewSalePage() {
                   <label>Qty (Max {item._maxQty || "—"})</label>
                   <input type="number" min={1} max={item._maxQty || 9999}
                     value={item.quantity_sold}
-                    onChange={e => updateItem(idx, "quantity_sold", e.target.value)}
+                    onChange={e => {
+                      const next = sanitizeIntInput(e.target.value);
+                      if (next === null) return;
+                      updateItem(idx, "quantity_sold", next);
+                    }}
                     className={ie.quantity_sold ? "error" : ""} />
                   {ie.quantity_sold && <span className="form-error">{ie.quantity_sold}</span>}
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Unit Price</label>
                   <input type="number" min={0} step="0.01" value={item.unit_price}
-                    onChange={e => updateItem(idx, "unit_price", e.target.value)}
+                    onChange={e => {
+                      const next = sanitizeDecimalInput(e.target.value);
+                      if (next === null) return;
+                      updateItem(idx, "unit_price", next);
+                    }}
                     className={ie.unit_price ? "error" : ""} />
                   {ie.unit_price && <span className="form-error">{ie.unit_price}</span>}
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Discount %</label>
                   <input type="number" min={0} max={100} value={item.discount_pct}
-                    onChange={e => updateItem(idx, "discount_pct", e.target.value)} />
+                    onChange={e => {
+                      const next = sanitizeDecimalInput(e.target.value);
+                      if (next === null) return;
+                      updateItem(idx, "discount_pct", next);
+                    }} />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label>Subtotal</label>

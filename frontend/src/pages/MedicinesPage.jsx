@@ -5,6 +5,8 @@ import ConfirmDialog from "../components/ConfirmDialog";
 
 const CATEGORIES = ["antibiotic","analgesic","antiviral","vitamin","vaccine","topical","other"];
 const EMPTY_FORM = { medicine_name:"", brand_name:"", category:"other", strength:"", reorder_level:0 };
+const INT_INPUT = /^\d*$/;
+const sanitizeIntInput = (val) => (val === "" || INT_INPUT.test(val) ? val : null);
 
 export default function MedicinesPage() {
   const [medicines, setMedicines] = useState([]);
@@ -134,6 +136,13 @@ function MedicineFormModal({ initial, onClose, onSaved }) {
   const [form, setForm]       = useState(initial ? { ...initial } : { ...EMPTY_FORM });
   const [loading, setLoading] = useState(false);
   const showToast = useToast();
+  const [categories, setCategories] = useState([]);
+
+  useEffect(() => {
+    apiFetch("/categories")
+      .then(setCategories)
+      .catch(() => setCategories([]));
+  }, []);
 
   async function handleSave() {
     if (!form.medicine_name || !form.category) { showToast("Name and category are required", "error"); return; }
@@ -168,7 +177,9 @@ function MedicineFormModal({ initial, onClose, onSaved }) {
             <div className="form-group">
               <label>Category *</label>
               <select value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
-                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                {(categories.length ? categories.map(c => c.name) : CATEGORIES).map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
               </select>
             </div>
             <div className="form-group">
@@ -177,7 +188,16 @@ function MedicineFormModal({ initial, onClose, onSaved }) {
             </div>
             <div className="form-group">
               <label>Reorder Level</label>
-              <input type="number" min={0} value={form.reorder_level} onChange={e => setForm(f => ({...f, reorder_level: parseInt(e.target.value)||0}))} />
+              <input
+                type="number"
+                min={0}
+                value={form.reorder_level}
+                onChange={e => {
+                  const next = sanitizeIntInput(e.target.value);
+                  if (next === null) return;
+                  setForm(f => ({ ...f, reorder_level: next === "" ? 0 : parseInt(next) }));
+                }}
+              />
             </div>
           </div>
         </div>

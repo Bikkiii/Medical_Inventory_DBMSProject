@@ -1,5 +1,8 @@
 const pool = require("../config/db");
 
+const INT_PATTERN = /^\d+$/;
+const isIntLike = (value) => INT_PATTERN.test(String(value ?? ""));
+
 // ============================================================
 // POST /api/returns/customer
 // Process a customer return — calls sp_process_return
@@ -37,6 +40,10 @@ const processCustomerReturn = async (req, res) => {
         "sale_item_id (or sale_item_ids), quantity_returned, reason, resolution, and processed_by are required",
     });
 
+  if (!isIntLike(quantity_returned)) {
+    return res.status(400).json({ error: "quantity_returned must be a whole number" });
+  }
+
   if (!["refund", "replacement", "pending"].includes(resolution))
     return res.status(400).json({
       error: "resolution must be one of: refund, replacement, pending",
@@ -51,7 +58,7 @@ const processCustomerReturn = async (req, res) => {
          si.quantity_sold,
          si.sale_id,
          s.sale_status,
-         COALESCE(SUM(CASE WHEN r.resolution != 'pending' THEN r.quantity_returned ELSE 0 END), 0) AS already_returned
+         COALESCE(SUM(r.quantity_returned), 0) AS already_returned
        FROM sale_item si
        JOIN sale s ON s.sale_id = si.sale_id
        LEFT JOIN \`return\` r ON r.sale_item_id = si.sale_item_id
@@ -136,14 +143,19 @@ const processCustomerReturn = async (req, res) => {
 const reportDamage = async (req, res) => {
   const {
     batch_item_id,
+    batch_item_ids,
     quantity_damaged,
     damage_cause,
     resolution,
     processed_by,
   } = req.body;
 
+  const ids = Array.isArray(batch_item_ids) && batch_item_ids.length > 0
+    ? batch_item_ids.map((x) => parseInt(x)).filter(Boolean)
+    : (batch_item_id ? [parseInt(batch_item_id)] : []);
+
   if (
-    !batch_item_id ||
+    !ids.length ||
     !quantity_damaged ||
     !damage_cause ||
     !resolution ||
@@ -151,8 +163,12 @@ const reportDamage = async (req, res) => {
   )
     return res.status(400).json({
       error:
-        "batch_item_id, quantity_damaged, damage_cause, resolution, and processed_by are required",
+        "batch_item_id (or batch_item_ids), quantity_damaged, damage_cause, resolution, and processed_by are required",
     });
+
+  if (!isIntLike(quantity_damaged)) {
+    return res.status(400).json({ error: "quantity_damaged must be a whole number" });
+  }
 
   if (!["write_off", "return_to_supplier"].includes(resolution))
     return res.status(400).json({
@@ -160,34 +176,66 @@ const reportDamage = async (req, res) => {
     });
 
   try {
-    // Validate batch_item exists
-    const [bi] = await pool.query(
-      "SELECT batch_item_id FROM batch_item WHERE batch_item_id = ?",
-      [batch_item_id],
+    const placeholders = ids.map(() => "?").join(",");
+    const [batchItems] = await pool.query(
+      `SELECT batch_item_id, medicine_id, expiry_date
+       FROM batch_item
+       WHERE batch_item_id IN (${placeholders})
+       ORDER BY expiry_date ASC, batch_item_id ASC`,
+      ids,
     );
 
-    if (bi.length === 0)
-      return res.status(404).json({ error: "Batch item not found" });
+    if (batchItems.length !== ids.length) {
+      return res.status(404).json({ error: "One or more batch items not found" });
+    }
 
-    // Check available stock before calling procedure
-    const [stock] = await pool.query(
-      `SELECT COALESCE(SUM(quantity_change), 0) AS current_stock
-       FROM stock_ledger WHERE batch_item_id = ?`,
-      [batch_item_id],
-    );
-
-    if (quantity_damaged > stock[0].current_stock)
-      return res.status(409).json({
-        error: `quantity_damaged (${quantity_damaged}) exceeds available stock (${stock[0].current_stock})`,
+    const medicineId = batchItems[0].medicine_id;
+    if (!batchItems.every((row) => row.medicine_id === medicineId)) {
+      return res.status(400).json({
+        error: "batch_item_ids must belong to the same medicine",
       });
+    }
 
-    await pool.query("CALL sp_report_damage(?, ?, ?, ?, ?)", [
-      batch_item_id,
-      quantity_damaged,
-      damage_cause,
-      resolution,
-      processed_by,
-    ]);
+    const [stockRows] = await pool.query(
+      `SELECT batch_item_id, COALESCE(SUM(quantity_change), 0) AS current_stock
+       FROM stock_ledger
+       WHERE batch_item_id IN (${placeholders})
+       GROUP BY batch_item_id`,
+      ids,
+    );
+    const stockMap = new Map(stockRows.map((row) => [row.batch_item_id, row.current_stock]));
+    const withStock = batchItems.map((row) => ({
+      ...row,
+      current_stock: stockMap.get(row.batch_item_id) || 0,
+    }));
+
+    const totalStock = withStock.reduce((sum, row) => sum + (row.current_stock || 0), 0);
+    if (quantity_damaged > totalStock) {
+      return res.status(409).json({
+        error: `quantity_damaged (${quantity_damaged}) exceeds available stock (${totalStock})`,
+      });
+    }
+
+    let remaining = parseInt(quantity_damaged);
+    for (const row of withStock) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, row.current_stock || 0);
+      if (take <= 0) continue;
+      await pool.query("CALL sp_report_damage(?, ?, ?, ?, ?)", [
+        row.batch_item_id,
+        take,
+        damage_cause,
+        resolution,
+        processed_by,
+      ]);
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      return res.status(409).json({
+        error: `Only ${totalStock} unit(s) can be written off for this selection`,
+      });
+    }
 
     return res.status(201).json({
       message: "Damage report submitted successfully. Stock ledger updated.",
@@ -262,7 +310,7 @@ const getReturnById = async (req, res) => {
         m.medicine_id,
         m.medicine_name,
         m.brand_name,
-        m.category,
+        c.name AS category,
         m.strength,
         b.batch_no,
         r.sale_item_id,
@@ -273,6 +321,7 @@ const getReturnById = async (req, res) => {
         u.full_name AS processed_by_name
       FROM \`return\` r
       JOIN medicine   m  ON m.medicine_id    = r.medicine_id
+      JOIN category   c  ON c.category_id    = m.category_id
       JOIN batch_item bi ON bi.batch_item_id = r.batch_item_id
       JOIN batch      b  ON b.batch_id       = bi.batch_id
       LEFT JOIN sale_item si ON si.sale_item_id = r.sale_item_id

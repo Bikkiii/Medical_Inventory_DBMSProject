@@ -138,6 +138,12 @@ function genBatchNo() {
   return `BCH-${year}-${rand}`;
 }
 
+const INT_INPUT = /^\d*$/;
+const DECIMAL_INPUT = /^\d*(\.\d{0,2})?$/;
+const sanitizeIntInput = (val) => (val === "" || INT_INPUT.test(val) ? val : null);
+const sanitizeDecimalInput = (val) => (val === "" || DECIMAL_INPUT.test(val) ? val : null);
+const sanitizePhoneInput = (val) => (val === "" || INT_INPUT.test(val) ? val : null);
+
 export function AddBatchPage() {
   const [suppliers,  setSuppliers]  = useState([]);
   const [medicines,  setMedicines]  = useState([]);
@@ -185,8 +191,12 @@ export function AddBatchPage() {
       if (!it.quantity_received || it.quantity_received <= 0) e.quantity_received = "Must be > 0";
       if (!it.manufacture_date) e.manufacture_date = "Required";
       if (!it.expiry_date)      e.expiry_date      = "Required";
+      if (it.manufacture_date && it.manufacture_date > today)
+        e.manufacture_date = "Cannot be in the future";
       if (it.manufacture_date && it.expiry_date && it.expiry_date <= it.manufacture_date)
         e.expiry_date = "Must be after manufacture date";
+      if (it.expiry_date && it.expiry_date <= today)
+        e.expiry_date = "Expiry must be in the future";
       if (!it.unit_price || it.unit_price <= 0) e.unit_price = "Must be > 0";
       return e;
     });
@@ -258,7 +268,9 @@ export function AddBatchPage() {
                   <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_name} ({s.phone})</option>
                 ))}
               </select>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddSup(true)}>+</button>
+              {user?.role === "admin" && (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddSup(true)}>+</button>
+              )}
             </div>
             {errors.supplier_id && <span className="form-error">{errors.supplier_id}</span>}
           </div>
@@ -293,6 +305,9 @@ export function AddBatchPage() {
 
         {items.map((item, idx) => {
           const itemErr = errors.items?.[idx] || {};
+          const expiryMin = item.manufacture_date && item.manufacture_date > today
+            ? item.manufacture_date
+            : today;
           return (
             <div key={idx} className="item-row">
               <div className="form-group" style={{ margin: 0 }}>
@@ -312,25 +327,33 @@ export function AddBatchPage() {
               </div>
               <div className="form-group" style={{ margin: 0 }}>
                 <input type="number" min={1} placeholder="50" value={item.quantity_received}
-                  onChange={e => updateItem(idx, "quantity_received", e.target.value)}
+                  onChange={e => {
+                    const next = sanitizeIntInput(e.target.value);
+                    if (next === null) return;
+                    updateItem(idx, "quantity_received", next);
+                  }}
                   className={itemErr.quantity_received ? "error" : ""} />
                 {itemErr.quantity_received && <span className="form-error">{itemErr.quantity_received}</span>}
               </div>
               <div className="form-group" style={{ margin: 0 }}>
-                <input type="date" value={item.manufacture_date}
+                <input type="date" max={today} value={item.manufacture_date}
                   onChange={e => updateItem(idx, "manufacture_date", e.target.value)}
                   className={itemErr.manufacture_date ? "error" : ""} />
                 {itemErr.manufacture_date && <span className="form-error">{itemErr.manufacture_date}</span>}
               </div>
               <div className="form-group" style={{ margin: 0 }}>
-                <input type="date" value={item.expiry_date}
+                <input type="date" min={expiryMin} value={item.expiry_date}
                   onChange={e => updateItem(idx, "expiry_date", e.target.value)}
                   className={itemErr.expiry_date ? "error" : ""} />
                 {itemErr.expiry_date && <span className="form-error">{itemErr.expiry_date}</span>}
               </div>
               <div className="form-group" style={{ margin: 0 }}>
                 <input type="number" min={0} step="0.01" placeholder="3.50" value={item.unit_price}
-                  onChange={e => updateItem(idx, "unit_price", e.target.value)}
+                  onChange={e => {
+                    const next = sanitizeDecimalInput(e.target.value);
+                    if (next === null) return;
+                    updateItem(idx, "unit_price", next);
+                  }}
                   className={itemErr.unit_price ? "error" : ""} />
                 {itemErr.unit_price && <span className="form-error">{itemErr.unit_price}</span>}
               </div>
@@ -347,7 +370,7 @@ export function AddBatchPage() {
         </div>
       </div>
 
-      {showAddSup && (
+      {showAddSup && user?.role === "admin" && (
         <AddSupplierModal
           onClose={() => setShowAddSup(false)}
           onSaved={(newSup) => {
@@ -392,7 +415,16 @@ function AddSupplierModal({ onClose, onSaved }) {
             </div>
             <div className="form-group">
               <label>Phone *</label>
-              <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="98XXXXXXXX" />
+              <input
+                value={form.phone}
+                inputMode="numeric"
+                onChange={e => {
+                  const next = sanitizePhoneInput(e.target.value);
+                  if (next === null) return;
+                  setForm(f => ({ ...f, phone: next }));
+                }}
+                placeholder="98XXXXXXXX"
+              />
             </div>
             <div className="form-group">
               <label>Email</label>

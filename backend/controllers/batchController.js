@@ -1,5 +1,10 @@
 const pool = require("../config/db");
 
+const INT_PATTERN = /^\d+$/;
+const DECIMAL_PATTERN = /^\d+(\.\d{1,2})?$/;
+const isIntLike = (value) => INT_PATTERN.test(String(value ?? ""));
+const isDecimalLike = (value) => DECIMAL_PATTERN.test(String(value ?? ""));
+
 // ============================================================
 // POST /api/batches
 // Creates a new batch with all its items.
@@ -54,6 +59,47 @@ const addBatch = async (req, res) => {
       return res.status(400).json({
         error:
           "Each item requires: medicine_id, quantity_received, manufacture_date, expiry_date, unit_price",
+      });
+    }
+
+    if (!isIntLike(item.quantity_received) || parseInt(item.quantity_received, 10) <= 0) {
+      return res.status(400).json({
+        error: "quantity_received must be a positive whole number",
+      });
+    }
+
+    if (!isDecimalLike(item.unit_price) || parseFloat(item.unit_price) <= 0) {
+      return res.status(400).json({
+        error: "unit_price must be a positive number with up to 2 decimals",
+      });
+    }
+
+    const today = new Date();
+    const todayDateOnly = new Date(today.toISOString().split("T")[0]);
+    const manufactureDate = new Date(item.manufacture_date);
+    const expiryDate = new Date(item.expiry_date);
+
+    if (Number.isNaN(manufactureDate.valueOf()) || Number.isNaN(expiryDate.valueOf())) {
+      return res.status(400).json({
+        error: "Invalid manufacture_date or expiry_date format",
+      });
+    }
+
+    if (manufactureDate > todayDateOnly) {
+      return res.status(400).json({
+        error: "manufacture_date cannot be in the future",
+      });
+    }
+
+    if (expiryDate <= manufactureDate) {
+      return res.status(400).json({
+        error: "expiry_date must be after manufacture_date",
+      });
+    }
+
+    if (expiryDate <= todayDateOnly) {
+      return res.status(400).json({
+        error: "expiry_date must be in the future",
       });
     }
   }
@@ -157,7 +203,7 @@ const getAllBatches = async (req, res) => {
         m.medicine_id,
         m.medicine_name,
         m.brand_name,
-        m.category,
+        c.name          AS category,
         m.strength,
         m.is_active     AS medicine_active,
         bi.quantity_received,
@@ -169,6 +215,7 @@ const getAllBatches = async (req, res) => {
       JOIN user       u  ON u.user_id        = b.received_by
       LEFT JOIN batch_item bi ON bi.batch_id = b.batch_id
       LEFT JOIN medicine   m  ON m.medicine_id = bi.medicine_id
+      LEFT JOIN category   c  ON c.category_id = m.category_id
       ORDER BY b.batch_id DESC
     `);
 
@@ -252,7 +299,7 @@ const getBatchDetails = async (req, res) => {
         m.medicine_id,
         m.medicine_name,
         m.brand_name,
-        m.category,
+        c.name          AS category,
         m.strength,
         m.is_active     AS medicine_active,
         bi.quantity_received,
@@ -264,6 +311,7 @@ const getBatchDetails = async (req, res) => {
       JOIN user       u  ON u.user_id        = b.received_by
       LEFT JOIN batch_item bi ON bi.batch_id = b.batch_id
       LEFT JOIN medicine   m  ON m.medicine_id = bi.medicine_id
+      LEFT JOIN category   c  ON c.category_id = m.category_id
       WHERE b.batch_id = ?`,
       [id],
     );

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { FiActivity } from "react-icons/fi";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
 import { apiPost } from "../api";
@@ -30,7 +31,7 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <div className="icon">💊</div>
+          <div className="icon"><FiActivity size={28} /></div>
           <h1>MedStore IMS</h1>
           <p>Medical Inventory Management System</p>
         </div>

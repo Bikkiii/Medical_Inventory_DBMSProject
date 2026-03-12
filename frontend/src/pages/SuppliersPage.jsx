@@ -4,6 +4,8 @@ import { useToast } from "../hooks/useToast";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 const EMPTY = { supplier_name:"", phone:"", email:"", address:"" };
+const PHONE_INPUT = /^\d*$/;
+const sanitizePhoneInput = (val) => (val === "" || PHONE_INPUT.test(val) ? val : null);
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
@@ -161,7 +163,16 @@ function SupplierFormModal({ initial, onClose, onSaved }) {
             </div>
             <div className="form-group">
               <label>Phone *</label>
-              <input value={form.phone} onChange={e => setForm(f=>({...f,phone:e.target.value}))} placeholder="98XXXXXXXX" />
+              <input
+                value={form.phone}
+                inputMode="numeric"
+                onChange={e => {
+                  const next = sanitizePhoneInput(e.target.value);
+                  if (next === null) return;
+                  setForm(f => ({ ...f, phone: next }));
+                }}
+                placeholder="98XXXXXXXX"
+              />
             </div>
             <div className="form-group">
               <label>Email</label>

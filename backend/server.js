@@ -20,6 +20,9 @@ app.use("/api/inventory", inventoryRoutes);
 const supplierRoutes = require("./routes/supplierRoutes");
 app.use("/api/suppliers", supplierRoutes);
 
+const categoryRoutes = require("./routes/categoryRoutes");
+app.use("/api/categories", categoryRoutes);
+
 const saleRoutes = require("./routes/saleRoutes");
 app.use("/api/sales", saleRoutes);
 

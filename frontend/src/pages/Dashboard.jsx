@@ -1,5 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  FiAlertTriangle,
+  FiPackage,
+  FiShoppingCart,
+  FiClock,
+} from "react-icons/fi";
 import { apiFetch } from "../api";
 
 const alertColor = {
@@ -52,22 +58,22 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="stats-grid">
         <div className="stat-card teal">
-          <div className="stat-icon teal">📦</div>
+          <div className="stat-icon teal"><FiPackage size={18} /></div>
           <div className="stat-value">{batches.length}</div>
           <div className="stat-label">Total Batches</div>
         </div>
         <div className="stat-card blue">
-          <div className="stat-icon blue">🧾</div>
+          <div className="stat-icon blue"><FiShoppingCart size={18} /></div>
           <div className="stat-value">{sales.length}</div>
           <div className="stat-label">Total Sales</div>
         </div>
         <div className="stat-card orange">
-          <div className="stat-icon orange">📉</div>
+          <div className="stat-icon orange"><FiAlertTriangle size={18} /></div>
           <div className="stat-value">{lowStock.length}</div>
           <div className="stat-label">Low Stock Alerts</div>
         </div>
         <div className="stat-card red">
-          <div className="stat-icon red">⏰</div>
+          <div className="stat-icon red"><FiClock size={18} /></div>
           <div className="stat-value">{expiry.length}</div>
           <div className="stat-label">Expiry Alerts (90d)</div>
         </div>

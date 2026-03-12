@@ -1,5 +1,15 @@
 const pool = require("../config/db");
 
+async function resolveCategoryId(category_id, category) {
+  if (category_id) return parseInt(category_id, 10);
+  if (!category) return null;
+  const [rows] = await pool.query(
+    "SELECT category_id FROM category WHERE name = ? AND is_active = TRUE",
+    [category],
+  );
+  return rows[0]?.category_id || null;
+}
+
 // ============================================================
 // GET /api/medicines
 // FIX: Returns only ACTIVE medicines (is_active = TRUE)
@@ -28,7 +38,18 @@ const getAllMedicines = async (req, res) => {
 const getAllMedicinesAdmin = async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT * FROM medicine ORDER BY medicine_name ASC",
+      `SELECT
+         m.medicine_id,
+         m.medicine_name,
+         m.brand_name,
+         m.category_id,
+         c.name AS category,
+         m.strength,
+         m.reorder_level,
+         m.is_active
+       FROM medicine m
+       JOIN category c ON c.category_id = m.category_id
+       ORDER BY m.medicine_name ASC`,
     );
 
     if (rows.length === 0) {
@@ -43,35 +64,37 @@ const getAllMedicinesAdmin = async (req, res) => {
 
 // ============================================================
 // POST /api/medicines
-// Schema columns: medicine_name, brand_name, category,
+// Schema columns: medicine_name, brand_name, category_id,
 //                 strength, reorder_level
 // FIX: Removed generic_name, form, unit — not in schema
-// Required: medicine_name, category
+// Required: medicine_name, category (name) or category_id
 // Optional: brand_name, strength, reorder_level
 //
-// category ENUM: 'antibiotic'|'analgesic'|'antiviral'|
-//                'vitamin'|'vaccine'|'topical'|'other'
+// category: category name string
 // ============================================================
 const addMedicine = async (req, res) => {
   try {
     const {
       medicine_name,
       brand_name, // optional (NULL allowed)
-      category, // ENUM — required
+      category,
+      category_id,
       strength, // optional (NULL allowed)
       reorder_level, // optional — defaults to 0
     } = req.body;
 
-    if (!medicine_name || !category) {
+    const resolvedCategoryId = await resolveCategoryId(category_id, category);
+
+    if (!medicine_name || !resolvedCategoryId) {
       return res.status(400).json({
-        error: "medicine_name and category are required",
+        error: "medicine_name and valid category are required",
       });
     }
 
     // Duplicate check — same name + strength combination
     const [existing] = await pool.query(
-      "SELECT medicine_id FROM medicine WHERE medicine_name = ? AND strength = ?",
-      [medicine_name, strength || null],
+      "SELECT medicine_id FROM medicine WHERE medicine_name = ? AND strength <=> ? AND category_id = ?",
+      [medicine_name, strength || null, resolvedCategoryId],
     );
 
     if (existing.length > 0) {
@@ -82,12 +105,12 @@ const addMedicine = async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO medicine
-         (medicine_name, brand_name, category, strength, reorder_level)
+         (medicine_name, brand_name, category_id, strength, reorder_level)
        VALUES (?, ?, ?, ?, ?)`,
       [
         medicine_name,
         brand_name || null,
-        category,
+        resolvedCategoryId,
         strength || null,
         reorder_level || 0,
       ],
@@ -109,7 +132,18 @@ const addMedicine = async (req, res) => {
 const getMedicineById = async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT * FROM medicine WHERE medicine_id = ?",
+      `SELECT
+         m.medicine_id,
+         m.medicine_name,
+         m.brand_name,
+         m.category_id,
+         c.name AS category,
+         m.strength,
+         m.reorder_level,
+         m.is_active
+       FROM medicine m
+       JOIN category c ON c.category_id = m.category_id
+       WHERE m.medicine_id = ?`,
       [req.params.id],
     );
 
@@ -132,8 +166,21 @@ const getMedicineById = async (req, res) => {
 const updateMedicine = async (req, res) => {
   try {
     const { id } = req.params;
-    const { medicine_name, brand_name, category, strength, reorder_level } =
-      req.body;
+    const {
+      medicine_name,
+      brand_name,
+      category,
+      category_id,
+      strength,
+      reorder_level,
+    } = req.body;
+
+    const resolvedCategoryId = await resolveCategoryId(category_id, category);
+    if (category || category_id) {
+      if (!resolvedCategoryId) {
+        return res.status(400).json({ error: "Invalid category" });
+      }
+    }
 
     const [existing] = await pool.query(
       "SELECT medicine_id FROM medicine WHERE medicine_id = ?",
@@ -148,14 +195,14 @@ const updateMedicine = async (req, res) => {
       `UPDATE medicine SET
          medicine_name = COALESCE(?, medicine_name),
          brand_name    = COALESCE(?, brand_name),
-         category      = COALESCE(?, category),
+         category_id   = COALESCE(?, category_id),
          strength      = COALESCE(?, strength),
          reorder_level = COALESCE(?, reorder_level)
        WHERE medicine_id = ?`,
       [
         medicine_name || null,
         brand_name || null,
-        category || null,
+        resolvedCategoryId ?? null,
         strength || null,
         reorder_level ?? null,
         id,
@@ -249,12 +296,12 @@ const reactivateMedicine = async (req, res) => {
 // ?is_active=true       → active medicines only
 // ?is_active=false      → inactive (discontinued) medicines only
 //                          (omit is_active to get ALL)
-// ?category=antibiotic  → filter by category ENUM
+// ?category=analgesic   → filter by category name
 // ?brand=amoxil         → partial brand_name match
 //
 // Examples:
 //   /filter?is_active=false                       → all discontinued
-//   /filter?category=antibiotic&is_active=true    → active antibiotics
+//   /filter?category=analgesic&is_active=true    → active analgesics
 //   /filter?q=para&is_active=false                → discontinued + name
 //   /filter?category=analgesic&is_active=false    → discontinued analgesics
 //   /filter                                       → all medicines
@@ -263,7 +310,20 @@ const filterMedicines = async (req, res) => {
   try {
     const { q, is_active, category, brand } = req.query;
 
-    let sql = `SELECT * FROM medicine WHERE 1=1`;
+    let sql = `
+      SELECT
+        m.medicine_id,
+        m.medicine_name,
+        m.brand_name,
+        m.category_id,
+        c.name AS category,
+        m.strength,
+        m.reorder_level,
+        m.is_active
+      FROM medicine m
+      JOIN category c ON c.category_id = m.category_id
+      WHERE 1=1
+    `;
     const params = [];
 
     // Partial medicine name search
@@ -279,9 +339,9 @@ const filterMedicines = async (req, res) => {
       sql += ` AND is_active = FALSE`;
     }
 
-    // Exact category filter (ENUM)
+    // Exact category filter (name)
     if (category) {
-      sql += ` AND category = ?`;
+      sql += ` AND c.name = ?`;
       params.push(category);
     }
 
@@ -291,7 +351,7 @@ const filterMedicines = async (req, res) => {
       params.push(`%${brand}%`);
     }
 
-    sql += ` ORDER BY medicine_name ASC`;
+    sql += ` ORDER BY m.medicine_name ASC`;
 
     const [rows] = await pool.query(sql, params);
 
