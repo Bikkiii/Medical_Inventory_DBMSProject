@@ -1,21 +1,26 @@
-const mysql = require("mysql2");
+const mysql = require("mysql2/promise");
 require("dotenv").config();
 
-// Using a connection pool instead of a single connection.
-// A pool reuses existing connections instead of creating a new one
-// for every request — much better for a multi-user app.
 const pool = mysql.createPool({
-  host:     process.env.DB_HOST     || "localhost",
-  port:     process.env.DB_PORT     || 3306,
-  user:     process.env.DB_USER     || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME     || "medical_inventory_db",
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit:    10,   // max 10 simultaneous connections
-  queueLimit:         0,    // unlimited queued requests
+  connectionLimit: 10,
+  queueLimit: 0,
 });
 
-// Wrap pool in promise API so we can use async/await
-const db = pool.promise();
+const testConnection = async () => {
+  try {
+    const connection = await pool.getConnection();
+    console.log("Connected to MySQL database");
+    connection.release();
+  } catch (err) {
+    console.error("Database connection failed:", err.message);
+  }
+};
 
-module.exports = db;
+testConnection();
+
+module.exports = pool;

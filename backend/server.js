@@ -1,54 +1,39 @@
-const express      = require("express");
-const cors         = require("cors");
+const express = require("express");
+const cors = require("cors");
 require("dotenv").config();
 
-const errorHandler = require("./middleware/errorHandler");
+require("./config/db");
 
-// Route files
-const usersRouter     = require("./routes/users");
-const suppliersRouter = require("./routes/suppliers");
-const medicinesRouter = require("./routes/medicines");
-const batchesRouter   = require("./routes/batches");
-const stockRouter     = require("./routes/stock");
-const salesRouter     = require("./routes/sales");
-const returnsRouter   = require("./routes/returns");
-
-const app  = express();
-const PORT = process.env.PORT || 3000;
-
-// ── Middleware ────────────────────────────────────────────────────────────────
-
-// Allow requests from the React frontend (running on a different port in dev)
-app.use(cors({ origin: "http://localhost:5173" }));
-
-// Parse incoming JSON request bodies
+const app = express();
+app.use(cors());
 app.use(express.json());
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+const medicineRoutes = require("./routes/medicineRoutes");
+app.use("/api/medicines", medicineRoutes);
 
-app.use("/api/users",     usersRouter);
-app.use("/api/suppliers", suppliersRouter);
-app.use("/api/medicines", medicinesRouter);
-app.use("/api/batches",   batchesRouter);
-app.use("/api/stock",     stockRouter);
-app.use("/api/sales",     salesRouter);
-app.use("/api/returns",   returnsRouter);
+const batchRoutes = require("./routes/batchRoutes");
+app.use("/api/batches", batchRoutes);
 
-// Health check — useful to quickly verify the server is running
+const inventoryRoutes = require("./routes/inventoryRoutes");
+app.use("/api/inventory", inventoryRoutes);
+
+const supplierRoutes = require("./routes/supplierRoutes");
+app.use("/api/suppliers", supplierRoutes);
+
+const saleRoutes = require("./routes/saleRoutes");
+app.use("/api/sales", saleRoutes);
+
+const authRoutes = require("./routes/authRoutes");
+app.use("/api/auth", authRoutes);
+
+const returnRoutes = require("./routes/returnRoutes");
+app.use("/api/returns", returnRoutes);
+
 app.get("/", (req, res) => {
-  res.json({ status: "ok", message: "Medical Store IMS API is running." });
+  res.json({ message: "Medical Inventory API is running" });
 });
 
-// 404 for unknown routes
-app.use((req, res) => {
-  res.status(404).json({ error: `Route ${req.method} ${req.path} not found.` });
-});
-
-// ── Central Error Handler ─────────────────────────────────────────────────────
-// Must be registered AFTER all routes
-app.use(errorHandler);
-
-// ── Start Server ──────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log("Server running on http://localhost:" + PORT);
 });
