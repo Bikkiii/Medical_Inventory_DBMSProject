@@ -16,7 +16,7 @@ const isIntLike = (value) => INT_PATTERN.test(String(value ?? ""));
 //   sale_item_id:      int    (required)
 //   quantity_returned: int    (required)
 //   reason:            string (required)
-//   resolution:        string (required — refund | replacement | pending)
+//   resolution:        string (required ? refund | replacement | write_off | return_to_supplier | pending)
 //   processed_by:      int    (required — user_id)
 // }
 // ============================================================
@@ -44,9 +44,9 @@ const processCustomerReturn = async (req, res) => {
     return res.status(400).json({ error: "quantity_returned must be a whole number" });
   }
 
-  if (!["refund", "replacement", "pending"].includes(resolution))
+  if (!["refund", "replacement", "write_off", "return_to_supplier", "pending"].includes(resolution))
     return res.status(400).json({
-      error: "resolution must be one of: refund, replacement, pending",
+      error: "resolution must be one of: refund, replacement, write_off, return_to_supplier, pending",
     });
 
   try {

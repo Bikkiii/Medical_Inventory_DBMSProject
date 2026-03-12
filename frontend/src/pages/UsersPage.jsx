@@ -11,6 +11,7 @@ export default function UsersPage() {
   const [search,  setSearch]  = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [confirm, setConfirm] = useState(null);
+  const [viewUser, setViewUser] = useState(null);
   const showToast = useToast();
   const { user: me } = useAuth();
 
@@ -98,7 +99,8 @@ export default function UsersPage() {
                     <td><span className={`badge ${u.role === "admin" ? "badge-purple" : "badge-blue"}`}>{u.role}</span></td>
                     <td>{u.is_active ? <span className="badge badge-green">Active</span> : <span className="badge badge-gray">Deactivated</span>}</td>
                     <td className="td-muted">{new Date(u.created_at).toLocaleDateString()}</td>
-                    <td>
+                    <td style={{ display: "flex", gap: 6 }}>
+                      <button className="btn btn-secondary btn-xs" onClick={() => setViewUser(u)}>View</button>
                       {u.user_id !== me.user_id && (
                         u.is_active
                           ? <button className="btn btn-danger btn-xs" onClick={() => handleDeactivate(u)}>Deactivate</button>
@@ -115,6 +117,30 @@ export default function UsersPage() {
 
       {showAdd && <AddUserModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); reload(); }} />}
       {confirm  && <ConfirmDialog message={confirm.message} onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} />}
+      {viewUser && <UserInfoModal user={viewUser} onClose={() => setViewUser(null)} />}
+    </div>
+  );
+}
+
+function UserInfoModal({ user, onClose }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box" onClick={e => e.stopPropagation()}>
+        <h3>User Info</h3>
+        <div className="modal-body">
+          <div className="form-grid">
+            <div><span className="td-muted">Full Name</span><br /><strong>{user.full_name}</strong></div>
+            <div><span className="td-muted">Username</span><br /><strong>@{user.username}</strong></div>
+            <div><span className="td-muted">Role</span><br /><span className={`badge ${user.role === "admin" ? "badge-purple" : "badge-blue"}`}>{user.role}</span></div>
+            <div><span className="td-muted">Status</span><br />{user.is_active ? <span className="badge badge-green">Active</span> : <span className="badge badge-gray">Deactivated</span>}</div>
+            <div><span className="td-muted">User ID</span><br /><strong>{user.user_id}</strong></div>
+            <div><span className="td-muted">Created</span><br /><strong>{new Date(user.created_at).toLocaleString()}</strong></div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary btn-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </div>
   );
 }

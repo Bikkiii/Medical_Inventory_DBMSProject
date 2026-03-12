@@ -11,6 +11,7 @@ const sanitizeIntInput = (val) => (val === "" || INT_INPUT.test(val) ? val : nul
 export default function MedicinesPage() {
   const [medicines, setMedicines] = useState([]);
   const [loading,   setLoading]   = useState(true);
+  const [stockTotals, setStockTotals] = useState(new Map());
   const [tab,       setTab]       = useState("all");
   const [search,    setSearch]    = useState("");
   const [showForm,  setShowForm]  = useState(false);
@@ -19,18 +20,39 @@ export default function MedicinesPage() {
   const showToast = useToast();
 
   useEffect(() => {
-    apiFetch("/medicines/all")
-      .then(setMedicines)
-      .catch(() => setMedicines([]))
-      .finally(() => setLoading(false));
+    loadData();
   }, []);
 
-  function reload() {
+  function buildTotals(rows) {
+    const totals = new Map();
+    (rows || []).forEach((row) => {
+      const id = row.medicine_id;
+      if (!id) return;
+      const current = Number(row.current_stock) || 0;
+      totals.set(id, (totals.get(id) || 0) + current);
+    });
+    return totals;
+  }
+
+  function loadData() {
     setLoading(true);
-    apiFetch("/medicines/all")
-      .then(setMedicines)
-      .catch(() => setMedicines([]))
+    Promise.all([
+      apiFetch("/medicines/all").catch(() => []),
+      apiFetch("/inventory/current-stock").catch(() => []),
+    ])
+      .then(([meds, stockRows]) => {
+        setMedicines(meds);
+        setStockTotals(buildTotals(stockRows));
+      })
+      .catch(() => {
+        setMedicines([]);
+        setStockTotals(new Map());
+      })
       .finally(() => setLoading(false));
+  }
+
+  function reload() {
+    loadData();
   }
 
   const displayed = medicines.filter(m => {
@@ -88,17 +110,18 @@ export default function MedicinesPage() {
           <div className="table-wrapper">
             <table>
               <thead>
-                <tr><th>Name</th><th>Brand</th><th>Category</th><th>Strength</th><th>Reorder</th><th>Status</th><th>Actions</th></tr>
+<tr><th>Name</th><th>Brand</th><th>Category</th><th>Strength</th><th>Total Stock</th><th>Reorder</th><th>Status</th><th>Actions</th></tr>
               </thead>
               <tbody>
                 {displayed.length === 0 ? (
-                  <tr><td colSpan={7} className="empty-state">No medicines found.</td></tr>
+                  <tr><td colSpan={8} className="empty-state">No medicines found.</td></tr>
                 ) : displayed.map(m => (
                   <tr key={m.medicine_id}>
                     <td style={{ fontWeight: 600 }}>{m.medicine_name}</td>
                     <td className="td-muted">{m.brand_name || "—"}</td>
                     <td><span className="badge badge-blue">{m.category}</span></td>
                     <td className="td-muted">{m.strength || "—"}</td>
+                    <td style={{ fontWeight: 700 }}>{stockTotals.get(m.medicine_id) ?? 0}</td>
                     <td>{m.reorder_level}</td>
                     <td>
                       {m.is_active

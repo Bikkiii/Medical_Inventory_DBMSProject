@@ -91,12 +91,17 @@ const getLedger = async (req, res) => {
         sl.reference_id,
         sl.transacted_by,
         u.full_name AS transacted_by_name,
-        sl.transacted_at
+        sl.transacted_at,
+        r.return_type,
+        r.resolution
       FROM stock_ledger sl
       JOIN medicine   m  ON m.medicine_id    = sl.medicine_id
       JOIN batch_item bi ON bi.batch_item_id = sl.batch_item_id
       JOIN batch      b  ON b.batch_id       = bi.batch_id
       JOIN user       u  ON u.user_id        = sl.transacted_by
+      LEFT JOIN \`return\` r
+        ON r.return_id = sl.reference_id
+       AND sl.transaction_type IN ('return_in', 'return_out', 'damage_write_off')
       ORDER BY sl.transacted_at DESC, sl.ledger_id DESC
     `);
 

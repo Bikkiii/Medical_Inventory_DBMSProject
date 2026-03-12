@@ -57,12 +57,12 @@ export default function LedgerPage() {
                 <tr>
                   <th>#</th><th>Date & Time</th><th>Medicine</th>
                   <th>Batch Item</th><th>Transaction</th>
-                  <th>Change</th><th>Balance</th><th>Reference</th><th>By</th>
+                  <th>Change</th><th>Balance</th><th>Reference</th><th>Return</th><th>By</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={9} className="empty-state">No ledger entries found.</td></tr>
+                  <tr><td colSpan={10} className="empty-state">No ledger entries found.</td></tr>
                 ) : filtered.map(row => (
                   <tr key={row.ledger_id}>
                     <td className="td-primary">{row.ledger_id}</td>
@@ -78,7 +78,12 @@ export default function LedgerPage() {
                       {row.quantity_change > 0 ? "+" : ""}{row.quantity_change}
                     </td>
                     <td style={{ fontWeight: 600 }}>{row.balance_after}</td>
-                    <td className="td-muted">{row.reference_id || "—"}</td>
+                    <td className="td-muted">{row.reference_id || "-"}</td>
+                    <td className="td-muted">
+                      {row.return_type
+                        ? row.return_type.replace(/_/g, " ") + (row.resolution ? " - " + row.resolution.replace(/_/g, " ") : "")
+                        : "-"}
+                    </td>
                     <td className="td-muted">{row.transacted_by_name || row.transacted_by}</td>
                   </tr>
                 ))}

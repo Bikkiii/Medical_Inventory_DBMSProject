@@ -281,52 +281,71 @@ BEGIN
 
     IF NEW.resolution != 'pending' THEN
 
-        -- FIX: fetch previous balance into variable BEFORE the INSERT
-        SELECT COALESCE(SUM(quantity_change), 0)
-        INTO   v_prev_balance
-        FROM   stock_ledger
-        WHERE  batch_item_id = NEW.batch_item_id;
-
         -- Determine transaction type
+        SET v_txn_type = NULL;
+        SET v_qty_change = 0;
+
         IF NEW.return_type = 'customer_return'
            AND NEW.resolution IN ('refund', 'replacement') THEN
             SET v_txn_type   = 'return_in';
             SET v_qty_change = NEW.quantity_returned;          -- stock UP
+
+        ELSEIF NEW.return_type = 'customer_return'
+               AND NEW.resolution = 'write_off' THEN
+            SET v_txn_type   = 'damage_write_off';
+            SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
+
+        ELSEIF NEW.return_type = 'customer_return'
+               AND NEW.resolution = 'return_to_supplier' THEN
+            SET v_txn_type   = 'return_out';
+            SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
 
         ELSEIF NEW.return_type = 'damage_report'
                AND NEW.resolution = 'write_off' THEN
             SET v_txn_type   = 'damage_write_off';
             SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
 
-        ELSEIF NEW.return_type = 'supplier_return'
-               OR NEW.resolution = 'return_to_supplier' THEN
+        ELSEIF NEW.return_type = 'damage_report'
+               AND NEW.resolution = 'return_to_supplier' THEN
+            SET v_txn_type   = 'return_out';
+            SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
+
+        ELSEIF NEW.return_type = 'supplier_return' THEN
             SET v_txn_type   = 'return_out';
             SET v_qty_change = -NEW.quantity_returned;         -- stock DOWN
         END IF;
 
-        SET v_balance_after = v_prev_balance + v_qty_change;
+        IF v_txn_type IS NOT NULL THEN
+            -- FIX: fetch previous balance into variable BEFORE the INSERT
+            SELECT COALESCE(SUM(quantity_change), 0)
+            INTO   v_prev_balance
+            FROM   stock_ledger
+            WHERE  batch_item_id = NEW.batch_item_id;
 
-        -- INSERT using variables — no self-referencing subquery
-        INSERT INTO stock_ledger (
-            medicine_id,
-            batch_item_id,
-            transaction_type,
-            quantity_change,
-            balance_after,
-            reference_id,
-            transacted_by,
-            transacted_at
-        )
-        VALUES (
-            NEW.medicine_id,
-            NEW.batch_item_id,
-            v_txn_type,
-            v_qty_change,
-            v_balance_after,
-            NEW.return_id,
-            NEW.processed_by,
-            NOW()
-        );
+            SET v_balance_after = v_prev_balance + v_qty_change;
+
+            -- INSERT using variables ? no self-referencing subquery
+            INSERT INTO stock_ledger (
+                medicine_id,
+                batch_item_id,
+                transaction_type,
+                quantity_change,
+                balance_after,
+                reference_id,
+                transacted_by,
+                transacted_at
+            )
+            VALUES (
+                NEW.medicine_id,
+                NEW.batch_item_id,
+                v_txn_type,
+                v_qty_change,
+                v_balance_after,
+                NEW.return_id,
+                NEW.processed_by,
+                NOW()
+            );
+        END IF;
 
     END IF;
 END$$

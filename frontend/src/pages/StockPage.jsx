@@ -18,6 +18,45 @@ const expiryLabel = {
 const stockBadge = { out_of_stock: "badge-red", low_stock: "badge-orange", ok: "" };
 const stockLabel = { out_of_stock: "OUT OF STOCK", low_stock: "LOW STOCK", ok: "" };
 
+const groupStockRows = (rows, reorderMap) => {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = [
+      row.medicine_id,
+      row.batch_no,
+      row.expiry_date,
+      row.unit_price,
+      row.supplier_name,
+    ].join(":");
+    const existing = grouped.get(key);
+    const current = Number(row.current_stock) || 0;
+    if (!existing) {
+      grouped.set(key, {
+        ...row,
+        group_key: key,
+        batch_item_ids: [row.batch_item_id],
+        current_stock: current,
+      });
+      return;
+    }
+    existing.batch_item_ids.push(row.batch_item_id);
+    existing.current_stock += current;
+  });
+
+  return Array.from(grouped.values()).map((row) => {
+    const reorderLevel = reorderMap.get(row.medicine_id);
+    let stock_status = row.stock_status;
+    if (typeof reorderLevel === "number") {
+      if (row.current_stock <= 0) stock_status = "out_of_stock";
+      else if (row.current_stock <= reorderLevel) stock_status = "low_stock";
+      else stock_status = "ok";
+    } else if (row.current_stock <= 0) {
+      stock_status = "out_of_stock";
+    }
+    return { ...row, stock_status };
+  });
+};
+
 export default function StockPage() {
   const [data, setData]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,10 +65,28 @@ export default function StockPage() {
   const [stockFilter,  setStockFilter]  = useState("all");
 
   useEffect(() => {
-    apiFetch("/inventory/current-stock")
-      .then(setData)
-      .catch(() => setData([]))
-      .finally(() => setLoading(false));
+    let active = true;
+    setLoading(true);
+    Promise.all([
+      apiFetch("/inventory/current-stock").catch(() => []),
+      apiFetch("/medicines").catch(() => []),
+    ])
+      .then(([stockRows, meds]) => {
+        if (!active) return;
+        const reorderMap = new Map(
+          (meds || []).map((m) => [m.medicine_id, Number(m.reorder_level)]),
+        );
+        setData(groupStockRows(stockRows || [], reorderMap));
+      })
+      .catch(() => {
+        if (!active) return;
+        setData([]);
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   const filtered = data.filter(row => {
@@ -38,7 +95,11 @@ export default function StockPage() {
     if (expiryFilter !== "all" && row.expiry_status !== expiryFilter) return false;
     if (stockFilter  !== "all" && row.stock_status  !== stockFilter)  return false;
     return true;
-  });
+  }).sort((a, b) =>
+    new Date(a.expiry_date) - new Date(b.expiry_date) ||
+    a.medicine_name.localeCompare(b.medicine_name) ||
+    a.batch_no.localeCompare(b.batch_no)
+  );
 
   if (loading) return <div className="loading">Loading stock data…</div>;
 
@@ -47,7 +108,7 @@ export default function StockPage() {
       <div className="page-header">
         <div>
           <h1>Stock / Inventory</h1>
-          <p>Live stock levels per batch item</p>
+          <p>Live stock levels (merged by batch & expiry)</p>
         </div>
       </div>
 
@@ -92,7 +153,7 @@ export default function StockPage() {
               {filtered.length === 0 ? (
                 <tr><td colSpan={9} className="empty-state">No stock data found.</td></tr>
               ) : filtered.map((row, i) => (
-                <tr key={i}>
+                <tr key={row.group_key || i}>
                   <td>
                     <div style={{ fontWeight: 600 }}>{row.medicine_name}</div>
                     {row.brand_name && <div className="td-muted">{row.brand_name}</div>}

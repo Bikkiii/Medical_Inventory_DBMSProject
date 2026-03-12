@@ -174,12 +174,18 @@ const groupStockRows = (rows) => {
     existing.current_stock += row.current_stock;
   });
 
-  return Array.from(grouped.values()).map((row) => ({
-    ...row,
-    batch_items: row.batch_items.sort(
-      (a, b) => new Date(a.expiry_date) - new Date(b.expiry_date) || a.batch_item_id - b.batch_item_id,
-    ),
-  }));
+  return Array.from(grouped.values())
+    .map((row) => ({
+      ...row,
+      batch_items: row.batch_items.sort(
+        (a, b) => new Date(a.expiry_date) - new Date(b.expiry_date) || a.batch_item_id - b.batch_item_id,
+      ),
+    }))
+    .sort((a, b) =>
+      new Date(a.expiry_date) - new Date(b.expiry_date) ||
+      a.medicine_name.localeCompare(b.medicine_name) ||
+      a.batch_no.localeCompare(b.batch_no)
+    );
 };
 
 const EMPTY_SALE_ITEM = () => ({
@@ -234,6 +240,7 @@ export function NewSalePage() {
   function pickStock(idx, val) {
     const row = stock.find(r => String(r.group_key) === String(val));
     if (!row) return;
+    const maxQty = Number(row.current_stock) || 0;
     setItems(items => items.map((it, i) =>
       i === idx ? {
         ...it,
@@ -243,8 +250,8 @@ export function NewSalePage() {
         _batchItems:   row.batch_items || [],
         medicine_id:   row.medicine_id || it.medicine_id,
         unit_price:    row.unit_price,
-        _maxQty:       row.current_stock,
-        _label:        `${row.medicine_name} | Batch: ${row.batch_no} | Exp: ${new Date(row.expiry_date).toLocaleDateString()} | Stock: ${row.current_stock}${row.batch_item_ids?.length > 1 ? " (merged)" : ""}`,
+        _maxQty:       maxQty,
+        _label:        `${row.medicine_name} | Batch: ${row.batch_no} | Exp: ${new Date(row.expiry_date).toLocaleDateString()} | Stock: ${maxQty}${row.batch_item_ids?.length > 1 ? " (merged)" : ""}`,
       } : it
     ));
   }
@@ -282,9 +289,12 @@ export function NewSalePage() {
       const key = it.group_key || it.batch_item_id;
       if (!it.batch_item_id) e.batch_item_id = "Select a medicine";
       if (key && counts[key] > 1) e.batch_item_id = "Duplicate batch selected";
-      if (!it.quantity_sold || it.quantity_sold <= 0) e.quantity_sold = "Must be > 0";
-      if (it._maxQty && it.quantity_sold > it._maxQty) e.quantity_sold = `Max available: ${it._maxQty}`;
-      if (!it.unit_price || it.unit_price <= 0) e.unit_price = "Must be > 0";
+      const qty = Number(it.quantity_sold) || 0;
+      const maxQty = Number(it._maxQty) || 0;
+      const price = Number(it.unit_price) || 0;
+      if (!qty || qty <= 0) e.quantity_sold = "Must be > 0";
+      if (maxQty > 0 && qty > maxQty) e.quantity_sold = `Max available: ${maxQty}`;
+      if (!price || price <= 0) e.unit_price = "Must be > 0";
       return e;
     });
     if (itemErrs.some(e => Object.keys(e).length > 0)) errs.items = itemErrs;

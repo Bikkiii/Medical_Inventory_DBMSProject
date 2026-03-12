@@ -340,6 +340,8 @@ export function CustomerReturnPage() {
               <select value={form.resolution} onChange={e => setForm(f => ({ ...f, resolution: e.target.value }))}>
                 <option value="refund">Refund — stock goes back, customer gets money</option>
                 <option value="replacement">Replacement — stock goes back, new sale separately</option>
+                <option value="write_off">Write-Off - returned item is discarded</option>
+                <option value="return_to_supplier">Return to Supplier - returned item sent back</option>
                 <option value="pending">Pending — no stock change yet</option>
               </select>
             </div>

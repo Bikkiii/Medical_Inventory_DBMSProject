@@ -154,9 +154,9 @@ BEGIN
         SET MESSAGE_TEXT = 'Return failed: quantity_returned must be greater than 0.';
     END IF;
 
-    IF p_resolution NOT IN ('refund', 'replacement', 'pending') THEN
+    IF p_resolution NOT IN ('refund', 'replacement', 'write_off', 'return_to_supplier', 'pending') THEN
         SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Return failed: resolution must be refund, replacement, or pending.';
+        SET MESSAGE_TEXT = 'Return failed: resolution must be refund, replacement, write_off, return_to_supplier, or pending.';
     END IF;
 
     SELECT COALESCE(SUM(quantity_returned), 0)
