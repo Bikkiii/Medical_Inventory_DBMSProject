@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiFetch, apiPost, apiPut, apiPatch } from "../api";
-import { useToast } from "../context/ToastContext";
+import { useToast } from "../hooks/useToast";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 const CATEGORIES = ["antibiotic","analgesic","antiviral","vitamin","vaccine","topical","other"];
@@ -16,9 +16,15 @@ export default function MedicinesPage() {
   const [confirm,   setConfirm]   = useState(null);
   const showToast = useToast();
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    apiFetch("/medicines/all")
+      .then(setMedicines)
+      .catch(() => setMedicines([]))
+      .finally(() => setLoading(false));
+  }, []);
 
-  function load() {
+  function reload() {
+    setLoading(true);
     apiFetch("/medicines/all")
       .then(setMedicines)
       .catch(() => setMedicines([]))
@@ -39,7 +45,7 @@ export default function MedicinesPage() {
         try {
           await apiPatch(`/medicines/${m.medicine_id}/deactivate`);
           showToast("Medicine deactivated.", "success");
-          load();
+          reload();
         } catch (err) { showToast(err.message, "error"); }
         setConfirm(null);
       }
@@ -50,7 +56,7 @@ export default function MedicinesPage() {
     try {
       await apiPatch(`/medicines/${m.medicine_id}/reactivate`);
       showToast("Medicine reactivated.", "success");
-      load();
+      reload();
     } catch (err) { showToast(err.message, "error"); }
   }
 
@@ -115,7 +121,7 @@ export default function MedicinesPage() {
         <MedicineFormModal
           initial={editItem}
           onClose={() => setShowForm(false)}
-          onSaved={() => { setShowForm(false); load(); }}
+          onSaved={() => { setShowForm(false); reload(); }}
         />
       )}
 

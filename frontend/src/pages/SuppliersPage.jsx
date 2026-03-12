@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiFetch, apiPost, apiPut, apiPatch } from "../api";
-import { useToast } from "../context/ToastContext";
+import { useToast } from "../hooks/useToast";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 const EMPTY = { supplier_name:"", phone:"", email:"", address:"" };
@@ -15,9 +15,15 @@ export default function SuppliersPage() {
   const [confirm,   setConfirm]   = useState(null);
   const showToast = useToast();
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    apiFetch("/suppliers/all")
+      .then(setSuppliers)
+      .catch(() => setSuppliers([]))
+      .finally(() => setLoading(false));
+  }, []);
 
-  function load() {
+  function reload() {
+    setLoading(true);
     apiFetch("/suppliers/all")
       .then(setSuppliers)
       .catch(() => setSuppliers([]))
@@ -38,7 +44,7 @@ export default function SuppliersPage() {
         try {
           await apiPatch(`/suppliers/${s.supplier_id}/deactivate`);
           showToast("Supplier deactivated.", "success");
-          load();
+          reload();
         } catch (err) { showToast(err.message, "error"); }
         setConfirm(null);
       }
@@ -49,7 +55,7 @@ export default function SuppliersPage() {
     try {
       await apiPatch(`/suppliers/${s.supplier_id}/reactivate`);
       showToast("Supplier reactivated.", "success");
-      load();
+      reload();
     } catch (err) { showToast(err.message, "error"); }
   }
 
@@ -113,7 +119,7 @@ export default function SuppliersPage() {
         <SupplierFormModal
           initial={editItem}
           onClose={() => setShowForm(false)}
-          onSaved={() => { setShowForm(false); load(); }}
+          onSaved={() => { setShowForm(false); reload(); }}
         />
       )}
 

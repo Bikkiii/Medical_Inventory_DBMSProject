@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch, apiPost } from "../api";
-import { useToast } from "../context/ToastContext";
-import { useAuth } from "../context/AuthContext";
+import { useToast } from "../hooks/useToast";
+import { useAuth } from "../hooks/useAuth";
 
 const statusBadge = {
   completed:          "badge-green",
@@ -220,9 +220,16 @@ export function NewSalePage() {
     if (!customer.name) errs.customer_name = "Customer name is required";
     if (!customer.payment_mode) errs.payment_mode = "Payment mode required";
 
+    const counts = {};
+    items.forEach(it => {
+      if (!it.batch_item_id) return;
+      counts[it.batch_item_id] = (counts[it.batch_item_id] || 0) + 1;
+    });
+
     const itemErrs = items.map(it => {
       const e = {};
       if (!it.batch_item_id) e.batch_item_id = "Select a medicine";
+      if (it.batch_item_id && counts[it.batch_item_id] > 1) e.batch_item_id = "Duplicate batch selected";
       if (!it.quantity_sold || it.quantity_sold <= 0) e.quantity_sold = "Must be > 0";
       if (it._maxQty && it.quantity_sold > it._maxQty) e.quantity_sold = `Max available: ${it._maxQty}`;
       if (!it.unit_price || it.unit_price <= 0) e.unit_price = "Must be > 0";
@@ -247,7 +254,7 @@ export function NewSalePage() {
         payment_mode:   customer.payment_mode,
         items: items.map(it => ({
           batch_item_id: parseInt(it.batch_item_id),
-          medicine_id:   stockMap[it.batch_item_id] || parseInt(it.medicine_id),
+          medicine_id:   stockMap[it.batch_item_id] ?? (it.medicine_id ? parseInt(it.medicine_id) : null),
           quantity_sold: parseInt(it.quantity_sold),
           unit_price:    parseFloat(it.unit_price),
           discount_pct:  parseFloat(it.discount_pct) || 0,

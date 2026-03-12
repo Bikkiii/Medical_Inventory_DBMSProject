@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { apiFetch, apiPost } from "../api";
-import { useToast } from "../context/ToastContext";
-import { useAuth } from "../context/AuthContext";
+import { useToast } from "../hooks/useToast";
+import { useAuth } from "../hooks/useAuth";
 
 const returnTypeBadge = {
   customer_return:  "badge-blue",
@@ -140,13 +140,20 @@ export function CustomerReturnPage() {
 
     setSubmitting(true);
     try {
-      await apiPost("/returns/customer", {
-        sale_item_id:      selectedItem.sale_item_id,
+      const payload = {
         quantity_returned: parseInt(form.quantity_returned),
         reason:            form.reason,
         resolution:        form.resolution,
         processed_by:      user.user_id,
-      });
+      };
+
+      if (Array.isArray(selectedItem.sale_item_ids) && selectedItem.sale_item_ids.length > 0) {
+        payload.sale_item_ids = selectedItem.sale_item_ids;
+      } else {
+        payload.sale_item_id = selectedItem.sale_item_id;
+      }
+
+      await apiPost("/returns/customer", payload);
       showToast("Return processed successfully!", "success");
       setSaleData(null);
       setSaleId("");
@@ -206,12 +213,37 @@ export function CustomerReturnPage() {
             <table>
               <thead><tr><th></th><th>Medicine</th><th>Batch</th><th>Qty Sold</th><th>Unit Price</th></tr></thead>
               <tbody>
-                {(saleData.items || []).map(it => (
-                  <tr key={it.sale_item_id}
-                    style={{ cursor: "pointer", background: selectedItem?.sale_item_id === it.sale_item_id ? "var(--teal-light)" : "" }}
+                {(() => {
+                  const groups = new Map();
+                  (saleData.items || []).forEach((it) => {
+                    const key = `${it.batch_item_id}:${it.medicine_id}:${it.unit_price}:${it.discount_pct || 0}`;
+                    const existing = groups.get(key);
+                    if (!existing) {
+                      groups.set(key, {
+                        key,
+                        sale_item_ids: [it.sale_item_id],
+                        sale_item_id: it.sale_item_id, // fallback
+                        batch_item_id: it.batch_item_id,
+                        medicine_id: it.medicine_id,
+                        medicine_name: it.medicine_name,
+                        brand_name: it.brand_name,
+                        batch_no: it.batch_no,
+                        quantity_sold: Number(it.quantity_sold) || 0,
+                        unit_price: it.unit_price,
+                        discount_pct: it.discount_pct || 0,
+                      });
+                      return;
+                    }
+                    existing.sale_item_ids.push(it.sale_item_id);
+                    existing.quantity_sold += Number(it.quantity_sold) || 0;
+                  });
+                  return Array.from(groups.values());
+                })().map(it => (
+                  <tr key={it.key}
+                    style={{ cursor: "pointer", background: selectedItem?.key === it.key ? "var(--teal-light)" : "" }}
                     onClick={() => { setSelectedItem(it); setForm(f => ({ ...f, quantity_returned: 1 })); }}>
                     <td>
-                      <input type="radio" readOnly checked={selectedItem?.sale_item_id === it.sale_item_id} />
+                      <input type="radio" readOnly checked={selectedItem?.key === it.key} />
                     </td>
                     <td><div style={{ fontWeight: 600 }}>{it.medicine_name}</div><div className="td-muted">{it.brand_name}</div></td>
                     <td className="td-primary">{it.batch_no}</td>

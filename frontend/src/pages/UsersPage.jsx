@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { apiFetch, apiPost, apiPatch } from "../api";
-import { useToast } from "../context/ToastContext";
-import { useAuth } from "../context/AuthContext";
+import { useToast } from "../hooks/useToast";
+import { useAuth } from "../hooks/useAuth";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 export default function UsersPage() {
@@ -14,9 +14,15 @@ export default function UsersPage() {
   const showToast = useToast();
   const { user: me } = useAuth();
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    apiFetch("/auth/users")
+      .then(setUsers)
+      .catch(() => setUsers([]))
+      .finally(() => setLoading(false));
+  }, []);
 
-  function load() {
+  function reload() {
+    setLoading(true);
     apiFetch("/auth/users")
       .then(setUsers)
       .catch(() => setUsers([]))
@@ -39,7 +45,7 @@ export default function UsersPage() {
         try {
           await apiPatch(`/auth/users/${u.user_id}/deactivate`);
           showToast("User deactivated.", "success");
-          load();
+          reload();
         } catch (err) { showToast(err.message, "error"); }
         setConfirm(null);
       }
@@ -50,7 +56,7 @@ export default function UsersPage() {
     try {
       await apiPatch(`/auth/users/${u.user_id}/reactivate`);
       showToast("User reactivated.", "success");
-      load();
+      reload();
     } catch (err) { showToast(err.message, "error"); }
   }
 
@@ -107,7 +113,7 @@ export default function UsersPage() {
         </div>
       )}
 
-      {showAdd && <AddUserModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
+      {showAdd && <AddUserModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); reload(); }} />}
       {confirm  && <ConfirmDialog message={confirm.message} onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} />}
     </div>
   );

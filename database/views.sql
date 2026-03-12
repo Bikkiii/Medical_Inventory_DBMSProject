@@ -13,6 +13,7 @@ USE medical_inventory_db;
 -- ============================================================
 CREATE OR REPLACE VIEW vw_current_stock AS
 SELECT
+    m.medicine_id,
     m.medicine_name,
     m.brand_name,
     m.category,

@@ -1,19 +1,19 @@
-import { createContext, useContext, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 
-const ToastCtx = createContext(null);
+import ToastCtx from "./toastContextValue";
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
+  const dismiss = useCallback((id) => {
+    setToasts(t => t.filter(x => x.id !== id));
+  }, []);
+
   const showToast = useCallback((message, type = "success") => {
     const id = Date.now();
     setToasts(t => [...t, { id, message, type }]);
-    if (type !== "error") setTimeout(() => dismiss(id), 3500);
-  }, []);
-
-  function dismiss(id) {
-    setToasts(t => t.filter(x => x.id !== id));
-  }
+    if (type !== "error") window.setTimeout(() => dismiss(id), 3500);
+  }, [dismiss]);
 
   return (
     <ToastCtx.Provider value={showToast}>
@@ -30,5 +30,3 @@ export function ToastProvider({ children }) {
     </ToastCtx.Provider>
   );
 }
-
-export function useToast() { return useContext(ToastCtx); }

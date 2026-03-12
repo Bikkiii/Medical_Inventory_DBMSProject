@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch, apiPost } from "../api";
-import { useToast } from "../context/ToastContext";
-import { useAuth } from "../context/AuthContext";
+import { useToast } from "../hooks/useToast";
+import { useAuth } from "../hooks/useAuth";
 
 // ──────────────────────────────────────────
 //  Batches List Page
@@ -14,15 +14,12 @@ export function BatchesPage() {
   const [detail, setDetail]   = useState(null);
   const navigate = useNavigate();
 
-  useEffect(() => { load(); }, []);
-
-  function load() {
-    setLoading(true);
+  useEffect(() => {
     apiFetch("/batches")
       .then(setBatches)
       .catch(() => setBatches([]))
       .finally(() => setLoading(false));
-  }
+  }, []);
 
   const filtered = batches.filter(b =>
     !search ||

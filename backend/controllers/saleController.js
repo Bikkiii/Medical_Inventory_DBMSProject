@@ -36,15 +36,15 @@ const pool = require("../config/db");
 // }
 // ============================================================
 const processSale = async (req, res) => {
-  const { customer_name, customer_phone, served_by, payment_mode, items } =
-    req.body;
+  const { customer_name, customer_phone, served_by, payment_mode } = req.body;
+  const rawItems = req.body?.items;
 
   if (
     !customer_name ||
     !served_by ||
     !payment_mode ||
-    !items ||
-    items.length === 0
+    !rawItems ||
+    rawItems.length === 0
   ) {
     return res.status(400).json({
       error:
@@ -59,20 +59,51 @@ const processSale = async (req, res) => {
     });
   }
 
-  // Validate all items have required fields
-  for (const item of items) {
-    if (
-      !item.batch_item_id ||
-      !item.medicine_id ||
-      !item.quantity_sold ||
-      !item.unit_price
-    ) {
+  // Normalize items:
+  // - Coerce numeric fields
+  // - Merge duplicates by batch_item_id (prevents duplicated sale lines)
+  // - Reject duplicates if unit_price/discount_pct differs for same batch_item_id
+  const merged = new Map(); // batch_item_id -> { batch_item_id, quantity_sold, unit_price, discount_pct, medicine_id? }
+  for (const item of rawItems) {
+    const batch_item_id = Number.parseInt(item?.batch_item_id, 10);
+    const quantity_sold = Number.parseInt(item?.quantity_sold, 10);
+    const unit_price = Number.parseFloat(item?.unit_price);
+    const discount_pct =
+      item?.discount_pct === undefined || item?.discount_pct === null
+        ? 0
+        : Number.parseFloat(item.discount_pct);
+
+    if (!batch_item_id || !quantity_sold || !unit_price) {
       return res.status(400).json({
-        error:
-          "Each item requires: batch_item_id, medicine_id, quantity_sold, unit_price",
+        error: "Each item requires: batch_item_id, quantity_sold, unit_price",
       });
     }
+
+    const medicine_id = item?.medicine_id ? Number.parseInt(item.medicine_id, 10) : null;
+    const existing = merged.get(batch_item_id);
+    if (!existing) {
+      merged.set(batch_item_id, {
+        batch_item_id,
+        medicine_id,
+        quantity_sold,
+        unit_price,
+        discount_pct: Number.isFinite(discount_pct) ? discount_pct : 0,
+      });
+      continue;
+    }
+
+    const samePrice = Number(existing.unit_price) === Number(unit_price);
+    const sameDisc = Number(existing.discount_pct) === Number(discount_pct || 0);
+    if (!samePrice || !sameDisc) {
+      return res.status(400).json({
+        error: `Duplicate batch_item_id ${batch_item_id} must have same unit_price and discount_pct`,
+      });
+    }
+
+    existing.quantity_sold += quantity_sold;
   }
+
+  const items = Array.from(merged.values());
 
   try {
     let sale_id = null;
@@ -81,7 +112,7 @@ const processSale = async (req, res) => {
     for (let i = 0; i < items.length; i++) {
       const {
         batch_item_id,
-        medicine_id,
+        medicine_id: medicineIdFromClient,
         quantity_sold,
         unit_price,
         discount_pct = 0,
@@ -89,7 +120,7 @@ const processSale = async (req, res) => {
 
       // Check batch_item exists and is not expired before selling
       const [bi] = await pool.query(
-        "SELECT expiry_date FROM batch_item WHERE batch_item_id = ?",
+        "SELECT expiry_date, medicine_id FROM batch_item WHERE batch_item_id = ?",
         [batch_item_id],
       );
 
@@ -102,6 +133,13 @@ const processSale = async (req, res) => {
       if (new Date(bi[0].expiry_date) < new Date()) {
         return res.status(409).json({
           error: `batch_item_id ${batch_item_id} is expired and cannot be sold`,
+        });
+      }
+
+      const medicine_id = bi[0].medicine_id;
+      if (medicineIdFromClient && Number(medicineIdFromClient) !== Number(medicine_id)) {
+        return res.status(400).json({
+          error: `medicine_id does not match batch_item_id ${batch_item_id}`,
         });
       }
 
@@ -224,7 +262,7 @@ const getAllSales = async (req, res) => {
 const getSaleById = async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT
+      `SELECT DISTINCT
         s.sale_id,
         s.sale_date,
         s.customer_name,
@@ -270,20 +308,27 @@ const getSaleById = async (req, res) => {
       sale_status: rows[0].sale_status,
       served_by: rows[0].served_by,
       served_by_full_name: rows[0].served_by_full_name,
-      items: rows.map((row) => ({
-        sale_item_id: row.sale_item_id,
-        batch_item_id: row.batch_item_id,
-        medicine_id: row.medicine_id,
-        medicine_name: row.medicine_name,
-        brand_name: row.brand_name,
-        category: row.category,
-        strength: row.strength,
-        batch_no: row.batch_no,
-        quantity_sold: row.quantity_sold,
-        unit_price: row.unit_price,
-        discount_pct: row.discount_pct,
-        subtotal: row.subtotal,
-      })),
+      items: Array.from(
+        new Map(
+          rows.map((row) => [
+            row.sale_item_id,
+            {
+              sale_item_id: row.sale_item_id,
+              batch_item_id: row.batch_item_id,
+              medicine_id: row.medicine_id,
+              medicine_name: row.medicine_name,
+              brand_name: row.brand_name,
+              category: row.category,
+              strength: row.strength,
+              batch_no: row.batch_no,
+              quantity_sold: row.quantity_sold,
+              unit_price: row.unit_price,
+              discount_pct: row.discount_pct,
+              subtotal: row.subtotal,
+            },
+          ]),
+        ).values(),
+      ),
     };
 
     return res.json(sale);

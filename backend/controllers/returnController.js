@@ -18,19 +18,23 @@ const pool = require("../config/db");
 // }
 // ============================================================
 const processCustomerReturn = async (req, res) => {
-  const { sale_item_id, quantity_returned, reason, resolution, processed_by } =
-    req.body;
+  const {
+    sale_item_id,
+    sale_item_ids,
+    quantity_returned,
+    reason,
+    resolution,
+    processed_by,
+  } = req.body;
 
-  if (
-    !sale_item_id ||
-    !quantity_returned ||
-    !reason ||
-    !resolution ||
-    !processed_by
-  )
+  const ids = Array.isArray(sale_item_ids) && sale_item_ids.length > 0
+    ? sale_item_ids.map((x) => parseInt(x)).filter(Boolean)
+    : (sale_item_id ? [parseInt(sale_item_id)] : []);
+
+  if (!ids.length || !quantity_returned || !reason || !resolution || !processed_by)
     return res.status(400).json({
       error:
-        "sale_item_id, quantity_returned, reason, resolution, and processed_by are required",
+        "sale_item_id (or sale_item_ids), quantity_returned, reason, resolution, and processed_by are required",
     });
 
   if (!["refund", "replacement", "pending"].includes(resolution))
@@ -39,55 +43,72 @@ const processCustomerReturn = async (req, res) => {
     });
 
   try {
-    // Validate sale_item exists and fetch quantity_sold + sale_status
-    const [saleItem] = await pool.query(
-      `SELECT si.sale_item_id, si.quantity_sold, si.sale_id, s.sale_status
+    // Fetch all sale items at once (also includes already returned amounts)
+    const placeholders = ids.map(() => "?").join(",");
+    const [rows] = await pool.query(
+      `SELECT
+         si.sale_item_id,
+         si.quantity_sold,
+         si.sale_id,
+         s.sale_status,
+         COALESCE(SUM(CASE WHEN r.resolution != 'pending' THEN r.quantity_returned ELSE 0 END), 0) AS already_returned
        FROM sale_item si
        JOIN sale s ON s.sale_id = si.sale_id
-       WHERE si.sale_item_id = ?`,
-      [sale_item_id],
+       LEFT JOIN \`return\` r ON r.sale_item_id = si.sale_item_id
+       WHERE si.sale_item_id IN (${placeholders})
+       GROUP BY si.sale_item_id, si.quantity_sold, si.sale_id, s.sale_status
+       ORDER BY si.sale_item_id ASC`,
+      ids,
     );
 
-    if (saleItem.length === 0)
-      return res.status(404).json({ error: "Sale item not found" });
+    if (rows.length !== ids.length) {
+      return res.status(404).json({ error: "One or more sale items not found" });
+    }
 
-    if (saleItem[0].sale_status === "fully_returned")
-      return res
-        .status(409)
-        .json({ error: "This sale has already been fully returned" });
+    const saleId = rows[0].sale_id;
+    if (!rows.every((r) => r.sale_id === saleId)) {
+      return res.status(400).json({ error: "sale_item_ids must belong to the same sale" });
+    }
 
-    if (quantity_returned > saleItem[0].quantity_sold)
+    if (rows[0].sale_status === "fully_returned") {
+      return res.status(409).json({ error: "This sale has already been fully returned" });
+    }
+
+    let remainingToAllocate = parseInt(quantity_returned);
+    if (!remainingToAllocate || remainingToAllocate <= 0) {
+      return res.status(400).json({ error: "quantity_returned must be > 0" });
+    }
+
+    for (const r of rows) {
+      const remainingReturnable = (r.quantity_sold || 0) - (r.already_returned || 0);
+      if (remainingReturnable <= 0) continue;
+      const take = Math.min(remainingReturnable, remainingToAllocate);
+      if (take > 0) {
+        await pool.query("CALL sp_process_return(?, ?, ?, ?, ?)", [
+          r.sale_item_id,
+          take,
+          reason,
+          resolution,
+          processed_by,
+        ]);
+        remainingToAllocate -= take;
+      }
+      if (remainingToAllocate <= 0) break;
+    }
+
+    if (remainingToAllocate > 0) {
+      const totalRemaining = rows.reduce(
+        (sum, r) => sum + Math.max((r.quantity_sold || 0) - (r.already_returned || 0), 0),
+        0,
+      );
       return res.status(409).json({
-        error: `quantity_returned (${quantity_returned}) cannot exceed quantity_sold (${saleItem[0].quantity_sold})`,
+        error: `Only ${totalRemaining} unit(s) can still be returned for this item`,
       });
-
-    // Prevent over-returning if already partially returned
-    const [existing] = await pool.query(
-      `SELECT COALESCE(SUM(quantity_returned), 0) AS already_returned
-       FROM \`return\`
-       WHERE sale_item_id = ? AND resolution != 'pending'`,
-      [sale_item_id],
-    );
-
-    const alreadyReturned = existing[0].already_returned || 0;
-    const remainingReturnable = saleItem[0].quantity_sold - alreadyReturned;
-
-    if (quantity_returned > remainingReturnable)
-      return res.status(409).json({
-        error: `Only ${remainingReturnable} unit(s) can still be returned for this item`,
-      });
-
-    await pool.query("CALL sp_process_return(?, ?, ?, ?, ?)", [
-      sale_item_id,
-      quantity_returned,
-      reason,
-      resolution,
-      processed_by,
-    ]);
+    }
 
     return res.status(201).json({
       message: "Customer return processed successfully",
-      saleId: saleItem[0].sale_id,
+      saleId,
     });
   } catch (err) {
     if (err.sqlState === "45000" || err.code === "ER_SIGNAL_EXCEPTION")
