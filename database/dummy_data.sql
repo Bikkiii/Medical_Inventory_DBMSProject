@@ -22,16 +22,13 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- 1. USERS  (password = "password123")
 -- ============================================================
 INSERT INTO user (full_name, username, password_hash, role, is_active) VALUES
-('Admin User',      'aayush',       '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'admin',      TRUE),
-('Admin User',      'bikash',       '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'admin',      TRUE),
-('Brishav Pharmacist', 'brishav', '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'pharmacist', TRUE),
-('Apoorva Pharmacist', 'Apoorva', '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'pharmacist', TRUE);
+('Admin User',      'admin',       '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'admin',      TRUE),
+('John Pharmacist', 'john_pharma', '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'pharmacist', TRUE),
+('Sara Pharmacist', 'sara_pharma', '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu', 'pharmacist', TRUE);
 
-UPDATE user SET password_hash = '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu' WHERE username = 'aayush';
-UPDATE user SET password_hash = '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu' WHERE username = 'bikash';
-UPDATE user SET password_hash = '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu' WHERE username = 'brishav';
-UPDATE user SET password_hash = '$2b$10$KIX9FVtNsAF1YzT/NtJzPO3vVQlzY6eQkT1O5BmKqL7nRpWsGcIHu' WHERE username = 'apoorva';
-
+USE medical_inventory_db;
+UPDATE user SET password_hash = '$2b$10$8BihSh/enY98UMuiK/xc1.pkoX3RQ0akF3n5J6WzouBvFyO.lsLuK' WHERE username = 'admin';
+UPDATE user SET password_hash = '$2b$10$8BihSh/enY98UMuiK/xc1.pkoX3RQ0akF3n5J6WzouBvFyO.lsLuK' WHERE username = 'john_pharma';
 -- ============================================================
 -- 2. SUPPLIERS
 -- ============================================================
@@ -133,3 +130,24 @@ SELECT 'STOCK LEDGER' AS entity, COUNT(*) AS total FROM stock_ledger;
 SELECT 'SALES'        AS entity, COUNT(*) AS total FROM sale;
 SELECT 'SALE ITEMS'   AS entity, COUNT(*) AS total FROM sale_item;
 SELECT 'RETURNS'      AS entity, COUNT(*) AS total FROM `return`;
+dropdown)
+SELECT * FROM vw_active_suppliers ORDER BY supplier_name;
+
+-- Expiry alerts (within 90 days)
+SELECT medicine_name, batch_no, days_until_expiry, current_stock, alert_level
+FROM vw_expiry_alert;
+
+-- Low stock alerts (active medicines only — Insulin excluded)
+)
+SELECT * FROM vw_active_medicines ORDER BY medicine_name;
+
+-- Active suppliers only (for new batch dropdown)
+SELECT * FROM vw_active_suppliers ORDER BY supplier_name;
+
+-- Expiry alerts (within 90 days)
+SELECT medicine_name, batch_no, days_until_expiry, current_stock, alert_level
+FROM vw_expiry_alert;
+
+-- Low stock alerts (active medicines only — Insulin excluded)
+SELECT medicine_name, total_stock, reorder_level, shortage_quantity, stock_alert
+FROM vw_low_stock;
